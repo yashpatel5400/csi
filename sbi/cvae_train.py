@@ -242,7 +242,11 @@ class EmbeddingNet(nn.Module):
         return self.dense(x)
 
 if __name__ == "__main__":
-    task_name = "two_moons"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task")
+    args = parser.parse_args()
+    task_name = args.task
+    
     task = sbibm.get_task(task_name)
     prior = task.get_prior_dist()
     simulator = task.get_simulator()    

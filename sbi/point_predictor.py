@@ -75,7 +75,11 @@ class SimpleModel(nn.Module):
         return x, rep
 
 def train_model():
-    task_name = "two_moons"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task")
+    args = parser.parse_args()
+    task_name = args.task
+    
     task = sbibm.get_task(task_name)
     prior = task.get_prior_dist()
     simulator = task.get_simulator()
