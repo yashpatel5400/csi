@@ -1,27 +1,21 @@
-# Source code for experiments in "GFlowNet-EM for Learning Compositional Latent Variable Models"
+# GFlowNets and variational inference
 
-This repository contains code for our paper
+This repository contains code for the ICLR 2023 paper [GFlowNets and variational inference](https://arxiv.org/abs/2210.00580).
 
-**GFlowNet-EM for Learning Compositional Latent Variable Models** <br>
-*Edward J. Hu\*, Nikolay Malkin\*, Moksh Jain, Katie Everett, Alexandros Graikos, Yoshua Bengio* <br>
-Paper: https://arxiv.org/abs/2302.06576 <br>
+Please see the three directories for details on each experiment domain:
+- Synthetic grid enironment ([`grid`](./grid))
+- Small molecule synthesis ([`mols`](./mols))
+- Bayesian structure learning ([`dags`](./dags))
 
-We provide code for the three experiment domains studied:
-* Illustrative experiment with Gaussian mixtures (`toy_gaussians`),
-* Grammar induction (`grammars`),
-* Discrete variational autoencoders (`discrete_vae`).
-
-Please visit the individual directories for instructions on reproducing the results. 
-
-## Citation
+### Citation
 
 ```
-@inproceedings{hu2023gflownetem,
-title={{GFlowNet-EM} for Learning Compositional Latent Variable Models},
-author={Hu, Edward J and Malkin, Nikolay and Jain, Moksh and Everett, Katie and Graikos, Alexandros and Bengio, Yoshua},
-booktitle={International Conference on Machine Learning},
-year={2023},
-url={https://arxiv.org/abs/2302.06576}
+@article{malkin2023gflownets,
+    title = {{GFlowNets} and variational inference},
+    author = {Malkin, Nikolay and Lahlou, Salem and Deleu, Tristan and Ji, Xu and Hu, Edward and Everett, Katie and Zhang, Dinghuai and Bengio, Yoshua},
+    journal = {International Conference on Learning Representations (ICLR)},
+    year = {2023}
 }
 ```
-Please contact us or post an issue if you have any questions.
+
+Please open an issue or contact us if you have any questions.
