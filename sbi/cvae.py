@@ -254,31 +254,7 @@ class EmbeddingNet(nn.Module):
         '''
         return self.dense(x)
 
-def generate_data(prior, simulator, n_pts, return_theta=False):
-    theta = prior(num_samples=n_pts)
-    x = simulator(theta)
-
-    if return_theta: 
-        return theta, x
-    else:
-        return x
-
-def ci_len(encoder, q_hat, theta_grid, test_X_grid, test_sims, discretization):
-    grid_scores = 1 / encoder.log_prob(theta_grid, test_X_grid).detach().cpu().exp().numpy()
-    grid_scores = grid_scores.reshape(test_sims, -1) # reshape back to 2D grid per-trial
-
-    # hacky solution to vectorize this computation, but hey, I like it
-    confidence_mask = np.zeros(grid_scores.shape)
-    confidence_mask[grid_scores < q_hat] = discretization
-    interval_lengths = np.sum(confidence_mask, axis=1)
-    return np.mean(interval_lengths)
-
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--task")
-    # parser.add_argument("--cuda_idx")
-    # args = parser.parse_args()
-
     task_name = "two_moons"
     task = sbibm.get_task(task_name)
     prior = task.get_prior_dist()
