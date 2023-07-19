@@ -1,17 +1,3 @@
-"""
-To launch all the tasks, create tmux sessions (separately for each of the following) 
-and run (for instance):
-
-python canvi_sbibm.py --task two_moons --cuda_idx 0
-python canvi_sbibm.py --task slcp --cuda_idx 1
-python canvi_sbibm.py --task gaussian_linear_uniform --cuda_idx 2
-python canvi_sbibm.py --task bernoulli_glm --cuda_idx 3
-python canvi_sbibm.py --task gaussian_mixture --cuda_idx 4
-python canvi_sbibm.py --task gaussian_linear --cuda_idx 5
-python canvi_sbibm.py --task slcp_distractors --cuda_idx 6
-python canvi_sbibm.py --task bernoulli_glm_raw --cuda_idx 7
-"""
-
 import pandas as pd
 import numpy as np
 import sbibm
@@ -55,6 +41,7 @@ import os
 import pickle
 import argparse
 
+from point_predictor import SimpleModel
 
 class ContextSplineMap(nn.Module):
     """
@@ -260,35 +247,11 @@ if __name__ == "__main__":
     prior = task.get_prior_dist()
     simulator = task.get_simulator()    
 
-    setup_y = prior.sample((1,))
-    setup_x = simulator(setup_y)
-
-    class SimpleModel(nn.Module):
-        def __init__(self):
-            super(SimpleModel, self).__init__()
-            self.fc1 = nn.Linear(setup_x.shape[-1], 128)
-            self.fc2 = nn.Linear(128, 64)
-            self.fc3 = nn.Linear(64, 32)
-            self.fc4 = nn.Linear(32, setup_y.shape[-1])
-            
-        def forward(self, x):
-            x = F.relu(self.fc1(x))
-            x = F.relu(self.fc2(x))
-            x = F.relu(self.fc3(x))
-            x = self.fc4(x)
-            return x
-
     model = torch.load(f"{task_name}.pt")
 
-    activation = {}
-    def get_activation(name):
-        def hook(model, input, output):
-            activation[name] = output.detach()
-        return hook
-
-    model.fc3.register_forward_hook(get_activation('fc3'))
-    setup_y_pred = model(setup_x)
-    setup_z = activation['fc3']
+    setup_y = prior.sample((1,))
+    setup_x = simulator(setup_y)
+    _, setup_z = model(setup_x)
 
     mb_size = 100
     device = f"cuda:0"
@@ -309,8 +272,7 @@ if __name__ == "__main__":
     for epoch in range(5_001):
         y = prior.sample((mb_size,))
         x = simulator(y)
-        y_pred = model(x)
-        z = activation['fc3']
+        _, z = model(x)
 
         optimizer.zero_grad()
         loss = -1 * encoder.log_prob(z.to(device), x.to(device)).mean()
