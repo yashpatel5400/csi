@@ -5,6 +5,7 @@ import multiprocessing as mp
 import platform
 import warnings
 
+import pickle
 import cv2
 import mmcv
 import torch
@@ -173,7 +174,10 @@ def main():
     model = build_model(
         cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)
 
-    _ = load_checkpoint(model, args.checkpoint, map_location='cpu')
+    _ = load_checkpoint(model, args.checkpoint, map_location='cuda')
+    with open("model.pkl", "wb") as f:
+        pickle.dump(model, f)
+    exit()
 
     if not distributed:
         model = MMDataParallel(model, device_ids=[0])
