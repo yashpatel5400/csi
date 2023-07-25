@@ -75,7 +75,7 @@ class CVAE(nn.Module):
         return self.decoder(z, cond), means, log_var
     
     def generate(self, cond, n):
-        z = torch.randn(n, self.latent_size)
+        z = torch.randn(n, self.latent_size).to(cond.device)
         return self.decoder(z, cond)
 
 
