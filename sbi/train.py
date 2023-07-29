@@ -1,3 +1,17 @@
+"""
+To launch all the tasks, create tmux sessions (separately for each of the following) 
+and run (for instance):
+
+python canvi_sbibm.py --task two_moons --cuda_idx 0
+python canvi_sbibm.py --task slcp --cuda_idx 1
+python canvi_sbibm.py --task gaussian_linear_uniform --cuda_idx 2
+python canvi_sbibm.py --task bernoulli_glm --cuda_idx 3
+python canvi_sbibm.py --task gaussian_mixture --cuda_idx 4
+python canvi_sbibm.py --task gaussian_linear --cuda_idx 5
+python canvi_sbibm.py --task slcp_distractors --cuda_idx 6
+python canvi_sbibm.py --task bernoulli_glm_raw --cuda_idx 7
+"""
+
 import pandas as pd
 import numpy as np
 import sbibm
@@ -5,7 +19,6 @@ import torch
 import math
 import torch.distributions as D
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
 
 from pyknos.nflows import flows, transforms
 from functools import partial
@@ -41,7 +54,6 @@ import os
 import pickle
 import argparse
 
-from point_predictor import SimpleModel
 
 class ContextSplineMap(nn.Module):
     """
@@ -241,27 +253,42 @@ class EmbeddingNet(nn.Module):
         '''
         return self.dense(x)
 
+def generate_data(prior, simulator, n_pts, return_theta=False):
+    theta = prior(num_samples=n_pts)
+    x = simulator(theta)
+
+    if return_theta: 
+        return theta, x
+    else:
+        return x
+
+def ci_len(encoder, q_hat, theta_grid, test_X_grid, test_sims, discretization):
+    grid_scores = 1 / encoder.log_prob(theta_grid, test_X_grid).detach().cpu().exp().numpy()
+    grid_scores = grid_scores.reshape(test_sims, -1) # reshape back to 2D grid per-trial
+
+    # hacky solution to vectorize this computation, but hey, I like it
+    confidence_mask = np.zeros(grid_scores.shape)
+    confidence_mask[grid_scores < q_hat] = discretization
+    interval_lengths = np.sum(confidence_mask, axis=1)
+    return np.mean(interval_lengths)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task")
+    parser.add_argument("--cuda_idx")
     args = parser.parse_args()
-    task_name = args.task
-    
-    task = sbibm.get_task(task_name)
-    prior = task.get_prior_dist()
-    simulator = task.get_simulator()    
 
-    model = torch.load(f"{task_name}.pt")
+    task = sbibm.get_task(args.task)
+    prior = task.get_prior()
+    simulator = task.get_simulator()
 
-    setup_y = prior.sample((1,))
-    setup_x = simulator(setup_y)
-    _, setup_z = model(setup_x)
+    setup_theta, setup_x = generate_data(prior, simulator, 100, return_theta=True) 
 
     mb_size = 100
     device = f"cuda:0"
 
     # EXAMPLE BATCH FOR SHAPES
-    z_dim = setup_z.shape[-1]
+    z_dim = setup_theta.shape[-1]
     x_dim = setup_x.shape[-1]
     num_obs_flow = mb_size
     fake_zs = torch.randn((mb_size, z_dim))
@@ -270,24 +297,17 @@ if __name__ == "__main__":
 
     encoder.to(device)
     optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
-
-    save_iterate = 1_000
-
-    for epoch in range(5_001):
-        y = prior.sample((mb_size,))
-        x = simulator(y)
-        _, z = model(x)
-
+    
+    save_iterate = 100
+    for j in range(5_001):
+        theta, x = generate_data(prior, simulator, mb_size, return_theta=True)
+        theta = theta
         optimizer.zero_grad()
-        loss = -1 * encoder.log_prob(z.to(device), x.to(device)).mean()
+        loss = -1 * encoder.log_prob(theta.to(device), x.to(device)).mean()
         loss.backward()
         optimizer.step()
 
-        if epoch % 100 == 0:
-            print(f"Completed epoch: {epoch}")
-        
-        if epoch % save_iterate == 0:
-            cached_fn = os.path.join("results", f"{task_name}_epoch={epoch}.nf")
-            os.makedirs("results", exist_ok=True)
+        if j % save_iterate == 0:    
+            cached_fn = f"{args.task}_marg_epoch={j}.nf"
             with open(cached_fn, "wb") as f:
                 pickle.dump(encoder, f)
