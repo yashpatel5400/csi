@@ -12,6 +12,7 @@ from scipy.ndimage.measurements import label
 from sklearn.cluster import KMeans
 from scipy import spatial
 import itertools
+import argparse
 
 plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['font.family'] = 'STIXGeneral'
@@ -195,9 +196,12 @@ class CSI:
         return np.sum(opt_correspondence_dist ** 2)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task")
+    args = parser.parse_args()
+    task_name = args.task
+
     device = "cpu"
-    task_name = "gaussian_mixture"
-    
     task = sbibm.get_task(task_name)
     prior = task.get_prior_dist()
     simulator = task.get_simulator()
