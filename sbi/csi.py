@@ -1,3 +1,10 @@
+"""
+To launch all the tasks, create tmux sessions and run across tasks, i.e.
+
+python csi.py --task two_moons
+python csi.py --task gaussian_mixture
+"""
+
 import time
 import torch
 import sbibm
@@ -36,9 +43,10 @@ class CSI:
         self.encoder   = encoder
         self.N         = N
         self.conformal_quantile = self.get_conformal_quantile(self.prior, self.simulator, self.encoder, desired_coverage=desired_coverage)
+        self.trajectories = None
 
     def get_conformal_quantile(self, prior, simulator, encoder, desired_coverage):
-        sims = 10_000 # same number for both test and calibration
+        sims = 10_000
         calibration_theta = prior.sample((sims,))
         calibration_x = simulator(calibration_theta)
         cal_scores = 1 / encoder.log_prob(calibration_theta.to(device), calibration_x.to(device)).detach().cpu().exp().numpy()
@@ -85,9 +93,7 @@ class CSI:
                 exact_rps.append(kmeans.cluster_centers_)
         return np.vstack(exact_rps)
 
-    def _get_diffused_trajs(self, test_x):
-        T = 5_000 # time steps of repulsive simulation
-
+    def _get_diffused_trajs(self, test_x, T):
         y_hat = self.encoder.sample(self.N, test_x)[0].detach().cpu().numpy()
         test_x_tiled = np.tile(test_x, (y_hat.shape[0], 1)).astype(np.float32)
         trajectories = []
@@ -102,8 +108,17 @@ class CSI:
             trajectories.append(y_hat.copy())
         return np.array(trajectories)
 
-    def get_approx_rps(self, test_x):
-        trajectories = self._get_diffused_trajs(test_x)
+    def get_approx_rps(self, test_x, T=5_000, cache_trajs=False):
+        """
+        T : time steps of repulsive simulation
+        cache_trajs: HACK -- this arg doesn't really make any sense in real use cases, but it caches the trajectories
+            between calls of this function -- it should ONLY be used for repeated calls to this for visualization
+        """
+        if cache_trajs and self.trajectories is not None:
+            trajectories = self.trajectories[:T]
+        else:
+            trajectories = self._get_diffused_trajs(test_x, T)
+            self.trajectories = trajectories
 
         remaining_traj_idxs = set(range(self.N))
         final_trajs = []
@@ -134,7 +149,7 @@ class CSI:
             rps.append(kmeans.cluster_centers_)
         return np.vstack(rps)
     
-    def viz_rps(self, test_x, approx_rps, exact_rps, fn):
+    def viz_rps(self, test_x, exact_rps, approx_rps, fn):
         K = 200
         theta_grid = self._get_grid(K=K)
         region = self._get_conformal_region(test_x, theta_grid)
@@ -215,17 +230,23 @@ if __name__ == "__main__":
     test_theta = prior.sample((test_sim,))
     test_x = simulator(test_theta)
 
+    Ts = list(range(500, 20_001, 100))
     csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=8, desired_coverage=0.95)
+    os.makedirs("results", exist_ok=True)
 
     print("Computing exact RPs...")
     exact_rps  = csi.get_exact_rps(test_x)
 
     print("Computing approximate RPs...")
-    approx_rps = csi.get_approx_rps(test_x)
+    approx_rps = csi.get_approx_rps(test_x, T=Ts[-1], cache_trajs=True)
 
     print("Performing visualization...")
-    csi.viz_rps(test_x, exact_rps, approx_rps, f"{task_name}_rps.png")
+    csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
 
     print("Computing distances...")
-    dist = csi.get_dist(exact_rps, approx_rps)
-    print(dist)
+    dists = []
+    for T in Ts:
+        approx_rps = csi.get_approx_rps(test_x, T=T, cache_trajs=True)
+        dists.append(csi.get_dist(exact_rps, approx_rps))
+    sns.lineplot(x=Ts, y=dists)
+    plt.savefig(os.path.join("results", f"{task_name}_dists.png"))
