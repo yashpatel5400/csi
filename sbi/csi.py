@@ -36,8 +36,10 @@ plt.rc('ytick', labelsize=BIGGER_SIZE)    # fontsize of the tick labels
 plt.rc('legend', fontsize=BIGGER_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
+proj_dim = 4
+
 class CSI:
-    def __init__(self, prior, simulator, encoder, N, desired_coverage = 0.95):
+    def __init__(self, prior, simulator, encoder, N, mins=None, maxs=None, desired_coverage = 0.95):
         self.prior     = prior
         self.simulator = simulator
         self.encoder   = encoder
@@ -45,19 +47,27 @@ class CSI:
         self.conformal_quantile = self.get_conformal_quantile(self.prior, self.simulator, self.encoder, desired_coverage=desired_coverage)
         self.trajectories = None
 
+        self.mins = mins
+        self.maxs = maxs
+        if self.mins is None:
+            self.mins = self.prior.support.base_constraint.lower_bound.cpu().numpy()
+        if self.maxs is None:
+            self.maxs = self.prior.support.base_constraint.upper_bound.cpu().numpy()
+        self.mins = self.mins[:proj_dim]
+        self.maxs = self.maxs[:proj_dim]
+
     def get_conformal_quantile(self, prior, simulator, encoder, desired_coverage):
         sims = 10_000
         calibration_theta = prior.sample((sims,))
         calibration_x = simulator(calibration_theta)
+        calibration_theta = calibration_theta[:,:proj_dim]
         cal_scores = 1 / encoder.log_prob(calibration_theta.to(device), calibration_x.to(device)).detach().cpu().exp().numpy()
         return np.quantile(cal_scores, q = desired_coverage)
 
     def _get_grid(self, K = 200):
         # K -> discretization of the grid (assumed same for each dimension)
-        mins = self.prior.support.base_constraint.lower_bound.cpu().numpy()
-        maxs = self.prior.support.base_constraint.upper_bound.cpu().numpy()
-        d = len(mins) # dimensionality of theta
-        ranges = [np.arange(mins[i], maxs[i], (maxs[i] - mins[i]) / K) for i in range(d)]
+        d = len(self.mins) # dimensionality of theta
+        ranges = [np.arange(self.mins[i], self.maxs[i], (self.maxs[i] - self.mins[i]) / K) for i in range(d)]
         return np.array(np.meshgrid(*ranges)).T.reshape(-1, d).astype(np.float32)
 
     def _get_conformal_region(self, test_x, thetas):
@@ -66,7 +76,7 @@ class CSI:
         return ((1 / probs) < self.conformal_quantile).astype(int)
 
     def get_exact_rps(self, test_x):
-        K = 200
+        K = 50
         theta_grid = self._get_grid(K=K)
         region = self._get_conformal_region(test_x, theta_grid)
         region = region.reshape((K, K))
@@ -155,17 +165,14 @@ class CSI:
         region = self._get_conformal_region(test_x, theta_grid)
         region = region.reshape((K, K))
         
-        mins = self.prior.support.base_constraint.lower_bound.cpu().numpy()
-        maxs = self.prior.support.base_constraint.upper_bound.cpu().numpy()
-        
-        plt.imshow(region, extent=[mins[0], maxs[0], mins[1], maxs[1]], origin="lower")
+        plt.imshow(region, extent=[self.mins[0], self.maxs[0], self.mins[1], self.maxs[1]], origin="lower")
         plt.scatter(approx_rps[:,1], approx_rps[:,0], s=10, color="red", label="Estimate")
         plt.scatter(exact_rps[:,1], exact_rps[:,0], s=10, color="green", label="Exact")
 
         plt.xticks([])
         plt.yticks([])
-        plt.xlim(mins[0], maxs[0])
-        plt.ylim(mins[1], maxs[1])
+        plt.xlim(self.mins[0], self.maxs[0])
+        plt.ylim(self.mins[1], self.maxs[1])
         plt.legend()
 
         plt.savefig(fn)
@@ -221,7 +228,7 @@ if __name__ == "__main__":
     prior = task.get_prior_dist()
     simulator = task.get_simulator()
 
-    cached_fn = os.path.join("trained", f"{task_name}.nf")
+    cached_fn = os.path.join("projected_results", f"{task_name}.nf")
     with open(cached_fn, "rb") as f:
         encoder = pickle.load(f)
     encoder.to(device)
@@ -229,9 +236,13 @@ if __name__ == "__main__":
     test_sim = 1
     test_theta = prior.sample((test_sim,))
     test_x = simulator(test_theta)
+    test_theta = test_theta[:,:proj_dim]
+
+    with open(os.path.join("minmax", f"{task_name}.pkl"), "rb") as f:
+        mins, maxs = pickle.load(f)
 
     Ts = list(range(500, 20_001, 100))
-    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=8, desired_coverage=0.95)
+    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=8, mins=mins, maxs=maxs, desired_coverage=0.95)
     os.makedirs("results", exist_ok=True)
 
     print("Computing exact RPs...")
@@ -240,13 +251,17 @@ if __name__ == "__main__":
     print("Computing approximate RPs...")
     approx_rps = csi.get_approx_rps(test_x, T=Ts[-1], cache_trajs=True)
 
-    print("Performing visualization...")
-    csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
+    # print("Performing visualization...")
+    # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
 
     print("Computing distances...")
     dists = []
     for T in Ts:
         approx_rps = csi.get_approx_rps(test_x, T=T, cache_trajs=True)
         dists.append(csi.get_dist(exact_rps, approx_rps))
+    
+    with open(os.path.join("results", "dists", f"{task_name}.pkl"), "wb") as f:
+        pickle.dump((Ts, dists), f)
+    
     sns.lineplot(x=Ts, y=dists)
     plt.savefig(os.path.join("results", f"{task_name}_dists.png"))

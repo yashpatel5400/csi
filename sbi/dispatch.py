@@ -5,12 +5,12 @@ task_names = [
     "bernoulli_glm",
     "gaussian_linear_uniform",
     "gaussian_linear",
-    "gaussian_mixture",
+    # "gaussian_mixture",
     "lotka_volterra",
-    "sir",
-    "slcp_distractors",
+    # "sir",
+    # "slcp_distractors",
     "slcp",
-    "two_moons",
+    # "two_moons",
 ]
 
 server = libtmux.Server()
