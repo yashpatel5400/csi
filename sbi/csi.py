@@ -68,29 +68,51 @@ class CSI:
         # K -> discretization of the grid (assumed same for each dimension)
         d = len(self.mins) # dimensionality of theta
         ranges = [np.arange(self.mins[i], self.maxs[i], (self.maxs[i] - self.mins[i]) / K) for i in range(d)]
-        return np.array(np.meshgrid(*ranges)).T.reshape(-1, d).astype(np.float32)
+        return np.array(np.meshgrid(*ranges)).T.astype(np.float32)
 
     def _get_conformal_region(self, test_x, thetas):
-        test_x_tiled = np.tile(test_x, (thetas.shape[0], 1)).astype(np.float32)
-        probs = self.encoder.log_prob(thetas, test_x_tiled).detach().cpu().exp().numpy()
-        return ((1 / probs) < self.conformal_quantile).astype(int)
+        thetas_flat = thetas.reshape(-1, thetas.shape[-1])
+        test_x_tiled = np.tile(test_x, (thetas_flat.shape[0], 1)).astype(np.float32)
+        probs = self.encoder.log_prob(thetas_flat, test_x_tiled).detach().cpu().exp().numpy()
+        flat_region = ((1 / probs) < self.conformal_quantile).astype(int)
+        return flat_region.reshape(thetas.shape[:-1])
+
+    def _get_connected_components(self, region):
+        active_region = np.where(region == 1)
+        active_locs = set(zip(*active_region))
+
+        components = []
+        while len(active_locs) > 0:
+            component = set()
+            to_branch = {active_locs.pop()}
+            while len(to_branch) > 0:
+                current_loc = to_branch.pop()
+                component.add(current_loc)
+                current_loc_arr = np.array(current_loc) # necessary to change component values
+                for dim in range(len(current_loc_arr)):
+                    for displacement in [-1, 1]:
+                        displacement_loc = np.zeros(len(current_loc_arr)).astype(int)
+                        displacement_loc[dim] = displacement
+                        candidate_loc = tuple(current_loc_arr + displacement_loc)
+                        if candidate_loc in active_locs:
+                            active_locs.remove(candidate_loc)
+                            to_branch.add(candidate_loc)
+            components.append(np.array(list(component)))
+        return components
 
     def get_exact_rps(self, test_x):
-        K = 50
+        K = 60
         theta_grid = self._get_grid(K=K)
         region = self._get_conformal_region(test_x, theta_grid)
-        region = region.reshape((K, K))
-        
-        structure = np.ones((3, 3), dtype=int)  # this defines the connection filter
-        labeled, ncomponents = label(region, structure)
+        connected_components = self._get_connected_components(region)
 
         total_covered = np.sum(region)
         total_rps = 0
         exact_rps = []
 
-        for component in range(1, ncomponents + 1):
-            component_prop = np.sum(labeled == component) / total_covered
-            if component == ncomponents:
+        for component_idx, component in enumerate(connected_components):
+            component_prop = len(component) / total_covered
+            if component_idx == len(connected_components) - 1:
                 n = self.N - total_rps
             else:
                 n = int(np.round(component_prop * self.N))
@@ -98,7 +120,7 @@ class CSI:
 
             # TODO: should we ensure each connected component is > 1 in the "exact answer"? feels arbitrary but maybe desireable?
             if n > 0:
-                grid_region = theta_grid[(labeled == component).flatten()]
+                grid_region = theta_grid[tuple(component.T)]
                 kmeans = KMeans(n_clusters=n, random_state=0, n_init="auto").fit(grid_region)
                 exact_rps.append(kmeans.cluster_centers_)
         return np.vstack(exact_rps)
@@ -160,7 +182,7 @@ class CSI:
         return np.vstack(rps)
     
     def viz_rps(self, test_x, exact_rps, approx_rps, fn):
-        K = 200
+        K = 100
         theta_grid = self._get_grid(K=K)
         region = self._get_conformal_region(test_x, theta_grid)
         region = region.reshape((K, K))
