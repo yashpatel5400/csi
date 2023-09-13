@@ -54,22 +54,20 @@ def get_data(prior, simulator):
     # used for setting up dimensions
     sample_c = prior.sample((1,))
     sample_x = simulator(sample_c)
-    n = sample_c.shape[-1] # number of items (c in R^n)
-    d = sample_x.shape[-1] # dim of context to utility (x in R^d)
 
     N = 2_000
     N_train = 1000
     N_test  = 1000
 
-    c_dataset = prior.sample((N,)).numpy()
-    x_dataset = simulator(c_dataset).numpy()
+    c_dataset = prior.sample((N,))
+    x_dataset = simulator(c_dataset)
 
     to_tensor = lambda r : torch.tensor(r).to(torch.float32).to(device)
     x_train, x_cal = to_tensor(x_dataset[:N_train]), to_tensor(x_dataset[N_train:])
     c_train, c_cal = to_tensor(c_dataset[:N_train]), to_tensor(c_dataset[N_train:])
 
-    c_test = prior.sample((N_test,)).numpy()
-    x_test = simulator(c_test).numpy()
+    c_test = prior.sample((N_test,))
+    x_test = simulator(c_test)
     x_test, c_test = to_tensor(x_test), to_tensor(c_test)
 
     return (x_train, x_cal, x_test), (c_train, c_cal, c_test)
@@ -209,8 +207,8 @@ def cpo(generative_model, alpha, x, c_true, p, B):
     contained = int(c_score < conformal_quantile)
     c_region_centers = c_region_centers[0]
 
-    eta = 1e-2 # learning rate
-    T = 50 # optimization steps
+    eta = 1e-3 # learning rate
+    T = 1_000 # optimization steps
 
     w = np.random.random(c_true.shape[-1]) / 2
     opt_values = []
@@ -258,8 +256,8 @@ if __name__ == "__main__":
     prior = task.get_prior_dist()
     simulator = task.get_simulator()
 
-    (c_train, c_cal, c_test), (x_train, x_cal, x_test) = get_data(prior, simulator)
-    c_dataset = torch.hstack([c_train, c_cal]) # for cases where only marginal draws are used, no splitting occurs
+    (x_train, x_cal, x_test), (c_train, c_cal, c_test) = get_data(prior, simulator)
+    c_dataset = torch.vstack([c_train, c_cal]).detach().cpu().numpy() # for cases where only marginal draws are used, no splitting occurs
     point_predictor = get_point_predictor(x_train, c_train)
 
     cached_fn = os.path.join("trained", f"{task_name}.nf")
@@ -267,6 +265,9 @@ if __name__ == "__main__":
         generative_model = pickle.load(f)
     generative_model.to(device)
 
+    result_dir = os.path.join("results", task_name)
+    os.makedirs(result_dir, exist_ok=True)
+    
     alphas = [0.05]
     name_to_method = {
         "Box": box_solve_marg,
@@ -279,13 +280,14 @@ if __name__ == "__main__":
     method_values = {r"$\alpha$": alphas}
     method_std = {r"$\alpha$": alphas}
 
-    n_trials = 1
+    n_trials = 10
 
     for method_name in name_to_method:
         print(f"Running: {method_name}")
         for alpha in alphas:
             covered = 0
             values = []
+            trial_runs = {}
             
             for trial_idx in range(n_trials):
                 x = x_test[trial_idx]
@@ -302,9 +304,14 @@ if __name__ == "__main__":
                 covered += covered_trial
                 values.append(value_trial)
 
+                trial_runs[trial_idx] = value_trial
+                trial_df = pd.DataFrame(trial_runs, index=[0])
+                trial_df.to_csv(os.path.join(result_dir, f"{method_name}.csv"))
+
             if method_name not in method_coverages:
                 method_coverages[method_name] = []
                 method_values[method_name] = []
+                method_std[method_name] = []
 
             method_coverages[method_name].append(covered / n_trials)
             method_values[method_name].append(np.mean(values))
@@ -314,8 +321,6 @@ if __name__ == "__main__":
     values_df = pd.DataFrame(method_values)
     std_df = pd.DataFrame(method_std)
 
-    result_dir = os.path.join("results", task_name)
-    os.makedirs(result_dir, exist_ok=True)
     coverage_df.to_csv(os.path.join(result_dir, "coverage.csv"))
     values_df.to_csv(os.path.join(result_dir, "values.csv"))
     std_df.to_csv(os.path.join(result_dir, "std.csv"))

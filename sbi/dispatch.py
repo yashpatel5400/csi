@@ -2,9 +2,9 @@
 import libtmux
 
 task_names = [
-    "bernoulli_glm",
-    "gaussian_linear_uniform",
-    "gaussian_linear",
+    # "bernoulli_glm",
+    # "gaussian_linear_uniform",
+    # "gaussian_linear",
     # "gaussian_mixture",
     "lotka_volterra",
     # "sir",
