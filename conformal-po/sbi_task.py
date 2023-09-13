@@ -208,7 +208,7 @@ def cpo(generative_model, alpha, x, c_true, p, B):
     c_region_centers = c_region_centers[0]
 
     eta = 1e-3 # learning rate
-    T = 1_000 # optimization steps
+    T = 2_500 # optimization steps
 
     w = np.random.random(c_true.shape[-1]) / 2
     opt_values = []
