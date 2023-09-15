@@ -188,7 +188,7 @@ def grad_f(w, c):
 
 # generative model-based prediction regions
 def cpo(generative_model, alpha, x, c_true, p, B):
-    k = 20
+    k = 50
 
     c_cal_hat = generative_model.sample(k, x_cal).detach().cpu().numpy()
     c_cal_tiled = np.transpose(np.tile(c_cal.detach().cpu().numpy(), (k, 1, 1)), (1, 0, 2))
@@ -207,7 +207,7 @@ def cpo(generative_model, alpha, x, c_true, p, B):
     contained = int(c_score < conformal_quantile)
     c_region_centers = c_region_centers[0]
 
-    eta = 1e-3 # learning rate
+    eta = 5e-3 # learning rate
     T = 2_500 # optimization steps
 
     w = np.random.random(c_true.shape[-1]) / 2
@@ -282,6 +282,11 @@ if __name__ == "__main__":
 
     n_trials = 10
 
+    # want these to be consistent for comparison between methods, so generate once beforehand
+    ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
+    us = np.random.uniform(low=0, high=1, size=n_trials)
+    Bs = np.random.uniform(np.max(ps, axis=1), np.sum(ps, axis=1) - us * np.max(ps, axis=1))
+
     for method_name in name_to_method:
         print(f"Running: {method_name}")
         for alpha in alphas:
@@ -291,16 +296,14 @@ if __name__ == "__main__":
             
             for trial_idx in range(n_trials):
                 x = x_test[trial_idx]
-                c_true = c_test[trial_idx]
-
-                p = np.random.randint(low=0, high=1000, size=c_true.shape[-1])
-                u = np.random.uniform(low=0, high=1)
-                B = np.random.uniform(np.max(p), np.sum(p) - u * np.max(p))
-
+                c = c_test[trial_idx]
+                p = ps[trial_idx]
+                B = Bs[trial_idx]
+                
                 if method_name == "CPO":
-                    (covered_trial, value_trial) = name_to_method[method_name](generative_model, alpha, x, c_true, p, B)
+                    (covered_trial, value_trial) = name_to_method[method_name](generative_model, alpha, x, c, p, B)
                 else:
-                    (covered_trial, value_trial) = name_to_method[method_name](point_predictor, alpha, x, c_true, p, B)
+                    (covered_trial, value_trial) = name_to_method[method_name](point_predictor, alpha, x, c, p, B)
                 covered += covered_trial
                 values.append(value_trial)
 
