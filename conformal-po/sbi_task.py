@@ -17,6 +17,10 @@ import argparse
 import os
 import pickle
 
+# this is some egregious code, but will fix later
+ro_tasks = ["knapsack", "portfolio"]
+ro_task = "portfolio"
+
 class FeedforwardNN(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=64):
         super(FeedforwardNN, self).__init__()
