@@ -31,8 +31,8 @@ log = logging.getLogger(__name__)
 def main(cfg: DictConfig):
     logging.getLogger("pytorch_lightning").setLevel(logging.getLevelName("INFO"))
 
-    if cfg.get("seed", None) is not None:
-        pl.utilities.seed.seed_everything(cfg.seed)
+    # if cfg.get("seed", None) is not None:
+    #     pl.utilities.seed.seed_everything(cfg.seed)
 
     print(cfg)
 
@@ -85,7 +85,7 @@ def main(cfg: DictConfig):
         LearningRateMonitor(),
     ]
 
-    slurm_plugin = pl.plugins.environments.SLURMEnvironment(auto_requeue=False)
+    # slurm_plugin = pl.plugins.environments.SLURMEnvironment(auto_requeue=False)
 
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     cfg_dict["cwd"] = os.getcwd()
@@ -112,7 +112,7 @@ def main(cfg: DictConfig):
         callbacks=callbacks,
         precision=cfg.get("precision", 32),
         gradient_clip_val=cfg.optim.grad_clip,
-        plugins=slurm_plugin if slurm_plugin.detect() else None,
+        plugins=None,
         num_sanity_val_steps=0,
     )
 

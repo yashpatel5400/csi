@@ -1,6 +1,6 @@
 # @package _global_
 data: fire
-use_wandb: True
+use_wandb: False
 
 model:
   d_model: 2048

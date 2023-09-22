@@ -1,15 +1,15 @@
 defaults:
   - _self_
   - experiment: null
-  - override hydra/launcher: submitit_slurm
+  - override hydra/launcher: submitit_local
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
 data: volcano  # {volcano,earthquake,fire,flood}
-earth_datadir: /checkpoint/${oc.env:USER}/data/earth_data
-rna_datadir: /checkpoint/${oc.env:USER}/data/rna
-top500_datadir: /checkpoint/${oc.env:USER}/data/top500
-mesh_datadir: /checkpoint/${oc.env:USER}/data/mesh
+earth_datadir: /home/yppatel/csi/geospatial/data/earth_data
+rna_datadir: /home/yppatel/csi/geospatial/data/rna
+top500_datadir: /home/yppatel/csi/geospatial/data/top500
+mesh_datadir: /home/yppatel/csi/geospatial/data/mesh
 data_seed: null  # seed for creating the data splits. By default, uses global seed.
 
 # Only used for sampling from wrapped distributions.
@@ -77,10 +77,6 @@ hydra:
     dir: ./outputs/multiruns/${data}/fm/${now:%Y.%m.%d}/${now:%H%M%S}
     subdir: ${hydra.job.num}
   launcher:
-    max_num_timeout: 100000
-    timeout_min: 4319
     cpus_per_task: 10
     gpus_per_node: 1
     nodes: 1
-    partition: learnlab
-    constraint: volta32gb
