@@ -19,6 +19,8 @@ import pickle
 import io
 import argparse
 
+# Maybe see how all of this changes as alpha changes
+# That's why I have this function to take a list of alpha values
 def list_of_ints(arg):
     return list(map(float, arg.split(',')))
 
@@ -35,6 +37,8 @@ parser.add_argument('--N_test', default=100, type=int,
                     help='number of test samples')
 parser.add_argument('--samples_per_ball', default=100, type=int,
                     help='number of samples per ball')
+# parser.add_argument('--list_of_alphas', default= 0.05, type=list_of_ints,
+#                     help='list of alphas for conformal quantile')
 
 plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['font.family'] = 'STIXGeneral'
@@ -75,10 +79,6 @@ def get_data(prior, simulator, N_cal = 1000, N_test = 100):
     # used for setting up dimensions
     sample_c = prior.sample((1,))
     sample_x = simulator(sample_c)
-
-    # N = 2_000
-    # N_train = 1000
-    # N_test  = 1000
 
     c_dataset = prior.sample((N_cal,))
     x_dataset = simulator(c_dataset)
@@ -152,7 +152,22 @@ def sample_from_k_balls_assign_voronoi(r, N, d, k, encoder, x_test):
     volume = sum(fractions)*volume_d_ball(d, r)
     
 
-    return samples, voronoi_assignments, fractions, volume
+    return centers, samples, voronoi_assignments, fractions, volume
+
+# Gridding up the space. Need to fix this
+
+def get_grid(size = 200, dim = 2, prior= None):
+    mins = prior.support.base_constraint.lower_bound.cpu().numpy()
+    maxs = prior.support.base_constraint.upper_bound.cpu().numpy()
+    ranges = [np.arange(mins[i], maxs[i], (maxs[i] - mins[i]) / size) for i in range(d)]
+    return np.array(np.meshgrid(*ranges)).T.astype(np.float32).reshape(-1, dim)
+
+
+# If dimensions are low we can compare the random estimates with the actual volume
+def compute_actual_volume(radius, centers, prior):
+    grid = get_grid(prior=prior)
+    return grid.shape
+
 
 
 def multiple_experiment_run(r, N, d, range_k, encoder, x_test):
@@ -163,7 +178,7 @@ def multiple_experiment_run(r, N, d, range_k, encoder, x_test):
         z = 0
         print("Sample: {}/{}".format(j+ 1, size_of_x))
         for i in range_k:
-            _, _, fractions, volume = sample_from_k_balls_assign_voronoi(r[z], N, d, i, encoder, x_test[j].reshape(1, -1))
+            centers, _, _, fractions, volume = sample_from_k_balls_assign_voronoi(r[z], N, d, i, encoder, x_test[j].reshape(1, -1))
             volumes[j, z] = volume
             z += 1
     return volumes
@@ -206,13 +221,22 @@ if __name__ == "__main__":
     q_hats = [conformal_quantile(0.05, k, x_cal, c_cal, encoder) for k in range_k]
 
     # Getting volumes for each k of each test sample
+    list_of_volumes = []
+    list_of_avg_volumes = []
     volumes = multiple_experiment_run(q_hats, samples_per_ball, d, range_k, encoder, x_test)
-
+    for i in range(0, 10):
+        volumes = multiple_experiment_run(q_hats, samples_per_ball, d, range_k, encoder, x_test)
+        list_of_volumes.append(volumes)
+        list_of_avg_volumes.append(np.mean(volumes, axis=0))
+    
+    list_of_avg_volumes = np.array(list_of_avg_volumes)
+    print("Shape of list avg volume is {}".format(list_of_avg_volumes.shape))
     # Making a directory to store the results
     result_dir = os.path.join("results", task_name)
     os.makedirs(result_dir, exist_ok=True)
 
     # Making plot for average volume
+    
     avg_volume = np.mean(volumes, axis=0)
     some = np.arange(1, max_k + 1)
     plt.figure()

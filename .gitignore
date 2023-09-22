@@ -165,3 +165,4 @@ cython_debug/
 # Sahana's stuff
 conformal-po/results
 conformal-po/volume.sbat
+conformal-po/slurm-*
