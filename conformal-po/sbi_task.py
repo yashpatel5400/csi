@@ -18,8 +18,8 @@ import os
 import pickle
 
 # this is some egregious code, but will fix later
-ro_tasks = ["knapsack", "portfolio"]
-ro_task = "portfolio"
+ro_tasks = ["knapsack", "spp"]
+ro_task = "spp"
 
 class FeedforwardNN(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=64):
@@ -100,7 +100,7 @@ def get_point_predictor(x_train, c_train):
     return model
 
 
-def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B):
+def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B, A, b):
     c_true_np = c_true.detach().cpu().numpy()
     covered = int(np.all(c_box_lb <= c_true_np) and np.all(c_true_np <= c_box_ub))
 
@@ -111,25 +111,31 @@ def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B):
     c = model.rvar(c_true.shape[-1])
     uset = (c_box_lb <= c, c <= c_box_ub)
 
-    model.minmax(-c @ w, uset)
-    model.st(w <= 1)
-    model.st(w >= 0)
-    model.st(p @ w <= B)
+    if ro_task == "knapsack":
+        model.minmax(-c @ w, uset)
+        model.st(w <= 1)
+        model.st(w >= 0)
+        model.st(p @ w <= B)
+    elif ro_task == "spp":
+        model.minmax(c @ w, uset)
+        model.st(w <= 1)
+        model.st(w >= 0)
+        model.st(A @ w == b) # A: adjacency matrix, b: 1 for source, -1 for target, 0 o.w.
 
     model.solve(grb)
     return covered, model.get()
 
 
 # *marginal* box constraint (i.e. just ignore contextual information)
-def box_solve_marg(point_predictor, alpha, x, c_true, p, B):
+def box_solve_marg(point_predictor, alpha, x, c_true, p, B, A, b):
     alpha = alpha / c_true.shape[-1] # Bonferroni
     c_box_lb = np.quantile(c_dataset, q=(alpha / 2), axis=0)
     c_box_ub = np.quantile(c_dataset, q=(1 - alpha / 2), axis=0)
-    return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B)
+    return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B, A, b)
 
 
 # *conditional* box conformal constraint (PTC-B)
-def box_solve_cp(point_predictor, alpha, x, c_true, p, B):
+def box_solve_cp(point_predictor, alpha, x, c_true, p, B, A, b):
     c_pred = point_predictor(x_cal)
     box_cal_scores = np.linalg.norm((c_pred - c_cal).detach().cpu().numpy(), np.inf, axis=1)
     conformal_quantile = np.quantile(box_cal_scores, q=1 - alpha, axis=0)
@@ -140,7 +146,7 @@ def box_solve_cp(point_predictor, alpha, x, c_true, p, B):
     return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B)
 
 
-def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B):
+def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B, A, b):
     # perform RO over constraint region
     model = ro.Model()
 
@@ -161,7 +167,7 @@ def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, 
 
 
 # *marginal* ellipsoid constraint
-def ellipsoid_solve_marg(point_predictor, alpha, x, c_true, p, B):
+def ellipsoid_solve_marg(point_predictor, alpha, x, c_true, p, B, A, b):
     mu = np.mean(c_dataset, axis=0)
     cov = np.cov(c_dataset.T)
     sqrt_cov_inv = np.linalg.cholesky(np.linalg.inv(cov))
@@ -172,7 +178,7 @@ def ellipsoid_solve_marg(point_predictor, alpha, x, c_true, p, B):
 
 
 # *conditional* ellipsoid conformal constraint (PTC-E)
-def ellipsoid_solve_cp(point_predictor, alpha, x, c_true, p, B):
+def ellipsoid_solve_cp(point_predictor, alpha, x, c_true, p, B, A, b):
     c_pred = point_predictor(x_cal)
     residuals = (c_pred - c_cal).detach().cpu().numpy()
 
@@ -191,7 +197,7 @@ def grad_f(w, c):
 
 
 # generative model-based prediction regions
-def cpo(generative_model, alpha, x, c_true, p, B):
+def cpo(generative_model, alpha, x, c_true, p, B, A, b):
     k = 50
 
     c_cal_hat = generative_model.sample(k, x_cal).detach().cpu().numpy()
@@ -287,9 +293,12 @@ if __name__ == "__main__":
     n_trials = 10
 
     # want these to be consistent for comparison between methods, so generate once beforehand
-    ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
-    us = np.random.uniform(low=0, high=1, size=n_trials)
-    Bs = np.random.uniform(np.max(ps, axis=1), np.sum(ps, axis=1) - us * np.max(ps, axis=1))
+    if ro_task == "knapsack":
+        ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
+        us = np.random.uniform(low=0, high=1, size=n_trials)
+        Bs = np.random.uniform(np.max(ps, axis=1), np.sum(ps, axis=1) - us * np.max(ps, axis=1))
+    elif ro_task == "spp":
+        As = 1
 
     for method_name in name_to_method:
         print(f"Running: {method_name}")
