@@ -79,7 +79,7 @@ def cpo(cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffic, A, b):
 
     eta = 5e-3 # learning rate
     T = 2_500 # optimization steps
-    w = model.dvar(A.shape[-1])
+    w = np.random.random(A.shape[-1]) / 2
     
     opt_values = []
     for t in range(T):
@@ -125,10 +125,10 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
-        "Box": normed_ball_solve_marg,
-        "PTC-B": normed_ball_solve_cp,
-        "Ellipsoid": normed_ball_solve_marg,
-        "PTC-E": normed_ball_solve_cp,
+        # "Box": normed_ball_solve_marg,
+        # "PTC-B": normed_ball_solve_cp,
+        # "Ellipsoid": normed_ball_solve_marg,
+        # "PTC-E": normed_ball_solve_cp,
         "CPO": cpo,
     }
     method_values = {r"$\alpha$": alphas}
