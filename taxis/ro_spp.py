@@ -1,3 +1,4 @@
+import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -120,6 +121,11 @@ def cpo(cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffic, A, b):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start_trial")
+    args = parser.parse_args()
+    start_trial = int(args.start_trial)
+    
     result_dir = os.path.join("results")
     os.makedirs(result_dir, exist_ok=True)
     
@@ -168,7 +174,7 @@ if __name__ == "__main__":
             
             for trial_idx in range(n_trials):
                 if method_name == "CPO":
-                    value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b)
+                    value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[start_trial + trial_idx], A, b)
                 else:
                     if method_name in ["Box", "PTC-B"]:
                         value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b, norm=np.inf)
@@ -178,7 +184,7 @@ if __name__ == "__main__":
 
                 trial_runs[trial_idx] = value_trial
                 trial_df = pd.DataFrame(trial_runs, index=[0])
-                trial_df.to_csv(os.path.join(result_dir, f"{method_name}.csv"))
+                trial_df.to_csv(os.path.join(result_dir, f"{method_name}_{start_trial}.csv"))
 
             if method_name not in method_values:
                 method_values[method_name] = []

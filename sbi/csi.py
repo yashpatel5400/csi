@@ -39,13 +39,15 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 proj_dim = 4
 
 class CSI:
-    def __init__(self, prior, simulator, encoder, N, mins=None, maxs=None, desired_coverage = 0.95):
+    def __init__(self, prior, simulator, encoder, N, k, mins=None, maxs=None, desired_coverage = 0.95):
         self.prior     = prior
         self.simulator = simulator
         self.encoder   = encoder
         self.N         = N
+        self.k         = k
         self.conformal_quantile = self.get_conformal_quantile(self.prior, self.simulator, self.encoder, desired_coverage=desired_coverage)
         self.trajectories = None
+        self.test_samples = None
 
         self.mins = mins
         self.maxs = maxs
@@ -61,8 +63,20 @@ class CSI:
         calibration_theta = prior.sample((sims,))
         calibration_x = simulator(calibration_theta)
         calibration_theta = calibration_theta[:,:proj_dim]
-        cal_scores = 1 / encoder.log_prob(calibration_theta.to(device), calibration_x.to(device)).detach().cpu().exp().numpy()
-        return np.quantile(cal_scores, q = desired_coverage)
+        
+        # cal_scores = 1 / encoder.log_prob(calibration_theta.to(device), calibration_x.to(device)).detach().cpu().exp().numpy()
+
+        theta_cal_hat = encoder.sample(self.k, calibration_x).detach().cpu().numpy()
+        theta_cal_tiled = np.transpose(np.tile(calibration_theta.detach().cpu().numpy(), (self.k, 1, 1)), (1, 0, 2))
+        theta_cal_diff = theta_cal_hat - theta_cal_tiled
+        theta_cal_norms = np.linalg.norm(theta_cal_diff, axis=-1)
+        theta_cal_scores = np.min(theta_cal_norms, axis=-1)
+
+        return np.quantile(theta_cal_scores, q = desired_coverage)
+    
+    def gen_test_samples(self, text_x):
+        # not really a fan of this, but this caches the generated samples, since we wish to have a fixed region
+        self.test_samples = self.encoder.sample(self.k, text_x).detach().cpu().numpy()
 
     def _get_grid(self, K = 200):
         # K -> discretization of the grid (assumed same for each dimension)
@@ -72,9 +86,15 @@ class CSI:
 
     def _get_conformal_region(self, test_x, thetas):
         thetas_flat = thetas.reshape(-1, thetas.shape[-1])
-        test_x_tiled = np.tile(test_x, (thetas_flat.shape[0], 1)).astype(np.float32)
-        probs = self.encoder.log_prob(thetas_flat, test_x_tiled).detach().cpu().exp().numpy()
-        flat_region = ((1 / probs) < self.conformal_quantile).astype(int)
+        theta_tiled = np.transpose(np.tile(thetas_flat, (self.k, 1, 1)), (1, 0, 2))
+        theta_diff = self.test_samples - theta_tiled
+        theta_norm = np.linalg.norm(theta_diff, axis=-1)
+        theta_score = np.min(theta_norm, axis=-1)
+
+        # test_x_tiled = np.tile(test_x, (thetas_flat.shape[0], 1)).astype(np.float32)
+        # probs = self.encoder.log_prob(thetas_flat, test_x_tiled).detach().cpu().exp().numpy()
+        
+        flat_region = (theta_score < self.conformal_quantile).astype(int)
         return flat_region.reshape(thetas.shape[:-1])
 
     def _get_connected_components(self, region):
@@ -188,7 +208,7 @@ class CSI:
         region = region.reshape((K, K))
         
         plt.imshow(region, extent=[self.mins[0], self.maxs[0], self.mins[1], self.maxs[1]], origin="lower")
-        plt.scatter(approx_rps[:,1], approx_rps[:,0], s=10, color="red", label="Estimate")
+        # plt.scatter(approx_rps[:,1], approx_rps[:,0], s=10, color="red", label="Estimate")
         plt.scatter(exact_rps[:,1], exact_rps[:,0], s=10, color="green", label="Exact")
 
         plt.xticks([])
@@ -264,17 +284,20 @@ if __name__ == "__main__":
         mins, maxs = pickle.load(f)
 
     Ts = list(range(500, 20_001, 100))
-    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=8, mins=mins, maxs=maxs, desired_coverage=0.95)
+    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=8, k=10, mins=mins, maxs=maxs, desired_coverage=0.95)
     os.makedirs("results", exist_ok=True)
+
+    csi.gen_test_samples(test_x)
 
     print("Computing exact RPs...")
     exact_rps  = csi.get_exact_rps(test_x)
 
     print("Computing approximate RPs...")
-    approx_rps = csi.get_approx_rps(test_x, T=Ts[-1], cache_trajs=True)
+    approx_rps = [] #  csi.get_approx_rps(test_x, T=Ts[-1], cache_trajs=True)
 
-    # print("Performing visualization...")
-    # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
+    print("Performing visualization...")
+    csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
+    exit()
 
     print("Computing distances...")
     dists = []
