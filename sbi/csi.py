@@ -203,8 +203,7 @@ class CSI:
             rps.append(kmeans.cluster_centers_)
         return np.vstack(rps)
     
-    def _mullers_sample_from_ball(self, center, r, N):
-        d = center.shape[0]
+    def _mullers_sample_from_ball(self, center, r, N, d):
         u = np.random.normal(0, 1, (N, d))
         norm = np.linalg.norm(u, axis=1)
         radius = np.random.uniform(0, 1, N)**(1/d)
@@ -214,9 +213,23 @@ class CSI:
         return u
 
     def get_approx_rps(self):
-        sampled_pts = [self._mullers_sample_from_ball(test_sample, self.conformal_quantile, N=5) for test_sample in self.test_samples]
+        N = 10 # samples per ball
+        d = self.test_samples.shape[-1]
+        
+        samples = np.zeros((self.k, N, d))
+        voronoi_assignments = np.zeros((self.k, N))
+
+        # fraction of samples in each ball in the associated voronoi cell
+        samples = np.apply_along_axis(self._mullers_sample_from_ball, axis=1, arr=self.test_samples, r=self.conformal_quantile, N=N, d=d)
+        samples = samples.reshape(self.k, N, 1, -1)
+        dist = np.linalg.norm(samples - self.test_samples, axis=-1)
+        voronoi_assignments = np.argmin(dist, axis=-1)
+        counts = np.sum(voronoi_assignments == np.arange(self.k).reshape(-1, 1), axis=1)
+        
+        samples = np.vstack([samples[k,:count,0,:] for k, count in enumerate(counts)]) # should subsample uniformly for counts but this is equivalent
+        
         rps = []
-        return np.vstack(sampled_pts)
+        return samples
     
     def viz_rps(self, test_x, exact_rps, approx_rps, fn):
         K = 100
