@@ -11,7 +11,9 @@ import sbibm
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import networkx as nx
 import seaborn as sns
+import seaborn_image as isns
 import pickle
 import os
 
@@ -120,19 +122,14 @@ class CSI:
             components.append(np.array(list(component)))
         return components
 
-    def get_exact_rps(self, test_x):
-        K = 60
-        theta_grid = self._get_grid(K=K)
-        region = self._get_conformal_region(test_x, theta_grid)
-        connected_components = self._get_connected_components(region)
-
-        total_covered = np.sum(region)
+    def _get_rps_cc(self, regions_samples):
+        total_covered = np.sum([len(region_samples) for region_samples in regions_samples])
         total_rps = 0
-        exact_rps = []
+        rps = []
 
-        for component_idx, component in enumerate(connected_components):
-            component_prop = len(component) / total_covered
-            if component_idx == len(connected_components) - 1:
+        for region_idx, region_samples in enumerate(regions_samples):
+            component_prop = len(region_samples) / total_covered
+            if region_idx == len(regions_samples) - 1:
                 n = self.N - total_rps
             else:
                 n = int(np.round(component_prop * self.N))
@@ -140,10 +137,17 @@ class CSI:
 
             # TODO: should we ensure each connected component is > 1 in the "exact answer"? feels arbitrary but maybe desireable?
             if n > 0:
-                grid_region = theta_grid[tuple(component.T)]
-                kmeans = KMeans(n_clusters=n, random_state=0, n_init="auto").fit(grid_region)
-                exact_rps.append(kmeans.cluster_centers_)
-        return np.vstack(exact_rps)
+                kmeans = KMeans(n_clusters=n, random_state=0, n_init="auto").fit(region_samples)
+                rps.append(kmeans.cluster_centers_)
+        return np.vstack(rps)
+
+    def get_exact_rps(self, test_x):
+        K = 60
+        theta_grid = self._get_grid(K=K)
+        region = self._get_conformal_region(test_x, theta_grid)
+        connected_components = self._get_connected_components(region)
+        region_samples = [theta_grid[tuple(connected_component.T)] for connected_component in connected_components]
+        return self._get_rps_cc(region_samples)
 
     def _get_diffused_trajs(self, test_x, T):
         y_hat = self.encoder.sample(self.N, test_x)[0].detach().cpu().numpy()
@@ -213,7 +217,7 @@ class CSI:
         return u
 
     def get_approx_rps(self):
-        N = 10 # samples per ball
+        N = 250 # samples per ball
         d = self.test_samples.shape[-1]
         
         samples = np.zeros((self.k, N, d))
@@ -228,8 +232,15 @@ class CSI:
         
         samples = np.vstack([samples[k,:count,0,:] for k, count in enumerate(counts)]) # should subsample uniformly for counts but this is equivalent
         
-        rps = []
-        return samples
+        # create graph
+        kdt = spatial.KDTree(samples)
+        edges = kdt.query_pairs(1)
+        G = nx.from_edgelist(edges)
+
+        connected_components = list(nx.connected_components(G))        
+        region_samples = [samples[np.array(list(connected_component))] 
+                          for connected_component in connected_components]
+        return self._get_rps_cc(region_samples)
     
     def viz_rps(self, test_x, exact_rps, approx_rps, fn):
         K = 100
@@ -238,14 +249,13 @@ class CSI:
         region = region.reshape((K, K))
         
         plt.imshow(region, extent=[self.mins[0], self.maxs[0], self.mins[1], self.maxs[1]], origin="lower")
-        plt.scatter(approx_rps[:,1], approx_rps[:,0], s=10, color="red", label="Estimate")
-        plt.scatter(exact_rps[:,1], exact_rps[:,0], s=10, color="green", label="Exact")
+        sns.scatterplot(x=approx_rps[:,1], y=approx_rps[:,0], s=10, palette="deep", label=r"$\widehat{\Xi}$")
+        sns.scatterplot(x=exact_rps[:,1], y=exact_rps[:,0], s=10, palette="deep", label=r"$\Xi$")
 
         plt.xticks([])
         plt.yticks([])
         plt.xlim(self.mins[0], self.maxs[0])
         plt.ylim(self.mins[1], self.maxs[1])
-        plt.legend()
 
         plt.savefig(fn)
         plt.clf()
