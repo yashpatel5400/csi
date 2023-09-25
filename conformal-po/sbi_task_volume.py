@@ -111,7 +111,10 @@ def conformal_quantile(alpha, k, x_cal, c_cal, encoder):
     return np.quantile(scores, (n_c + 1)*(1 - alpha)/n_c)
 
 def volume_d_ball(d, r):
-    return volume_d_dict[d](r)
+    if d > 10:
+        return r^d
+    else:
+        return volume_d_dict[d](r)
 
 # Picks radius randomly from the interval [0, 1] and picks a direction uniformly at random
 def mullers_sample_from_ball(center, r, N, d):
@@ -123,6 +126,31 @@ def mullers_sample_from_ball(center, r, N, d):
     return u
 
 def sample_from_k_balls_assign_voronoi(r, N, d, k, encoder, x_test):
+
+    # Getting the centers of the k balls
+    centers = encoder.sample(k, x_test).detach().cpu().numpy().reshape(k, -1)
+
+    # Samples from the k balls
+    samples = np.zeros((k, N, d))
+
+    # Giving the voronoi assignments
+    voronoi_assignments = np.zeros((k, N))
+
+    # fraction of samples in each ball in the associated voronoi cell
+    fractions = np.zeros(k)
+
+    # vectorized 
+    samples = np.apply_along_axis(mullers_sample_from_ball, axis=1, arr=centers, r=r, N=N, d=d)
+    dist = np.linalg.norm(samples.reshape(k, N, 1, -1) - centers, axis=-1)
+    voronoi_assignments = np.argmin(dist, axis=-1)
+    fractions = np.sum(voronoi_assignments == np.arange(k).reshape(-1, 1), axis=1)/N
+    volume = sum(fractions)*volume_d_ball(d, r)
+    
+
+    return centers, samples, voronoi_assignments, fractions, volume
+
+
+def sample_from_k_balls_assign_voronoi_2(r, N, d, k, encoder, x_test):
 
     # Getting the centers of the k balls
     centers = encoder.sample(k, x_test).detach().cpu().numpy().reshape(k, -1)
