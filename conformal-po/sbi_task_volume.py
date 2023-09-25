@@ -111,7 +111,10 @@ def conformal_quantile(alpha, k, x_cal, c_cal, encoder):
     return np.quantile(scores, (n_c + 1)*(1 - alpha)/n_c)
 
 def volume_d_ball(d, r):
-    return volume_d_dict[d](r)
+    if d > 10:
+        return r^d
+    else:
+        return volume_d_dict[d](r)
 
 # Picks radius randomly from the interval [0, 1] and picks a direction uniformly at random
 def mullers_sample_from_ball(center, r, N, d):
