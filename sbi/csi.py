@@ -63,7 +63,7 @@ class CSI:
         calibration_theta = prior.sample((sims,))
         calibration_x = simulator(calibration_theta)
         calibration_theta = calibration_theta[:,:proj_dim]
-        
+
         # cal_scores = 1 / encoder.log_prob(calibration_theta.to(device), calibration_x.to(device)).detach().cpu().exp().numpy()
 
         theta_cal_hat = encoder.sample(self.k, calibration_x).detach().cpu().numpy()
@@ -76,7 +76,7 @@ class CSI:
     
     def gen_test_samples(self, text_x):
         # not really a fan of this, but this caches the generated samples, since we wish to have a fixed region
-        self.test_samples = self.encoder.sample(self.k, text_x).detach().cpu().numpy()
+        self.test_samples = self.encoder.sample(self.k, text_x).detach().cpu().numpy()[0]
 
     def _get_grid(self, K = 200):
         # K -> discretization of the grid (assumed same for each dimension)
@@ -160,8 +160,10 @@ class CSI:
             trajectories.append(y_hat.copy())
         return np.array(trajectories)
 
-    def get_approx_rps(self, test_x, T=5_000, cache_trajs=False):
+    def get_approx_rps_diffuse(self, test_x, T=5_000, cache_trajs=False):
         """
+        NOTE: this form of uniform sampling is now deprecated in favor of Muller's sampling
+
         T : time steps of repulsive simulation
         cache_trajs: HACK -- this arg doesn't really make any sense in real use cases, but it caches the trajectories
             between calls of this function -- it should ONLY be used for repeated calls to this for visualization
@@ -201,6 +203,21 @@ class CSI:
             rps.append(kmeans.cluster_centers_)
         return np.vstack(rps)
     
+    def _mullers_sample_from_ball(self, center, r, N):
+        d = center.shape[0]
+        u = np.random.normal(0, 1, (N, d))
+        norm = np.linalg.norm(u, axis=1)
+        radius = np.random.uniform(0, 1, N)**(1/d)
+        
+        u = r * radius.reshape(-1, 1) * u / norm.reshape(-1, 1)
+        u = u + center
+        return u
+
+    def get_approx_rps(self):
+        sampled_pts = [self._mullers_sample_from_ball(test_sample, self.conformal_quantile, N=5) for test_sample in self.test_samples]
+        rps = []
+        return np.vstack(sampled_pts)
+    
     def viz_rps(self, test_x, exact_rps, approx_rps, fn):
         K = 100
         theta_grid = self._get_grid(K=K)
@@ -208,7 +225,7 @@ class CSI:
         region = region.reshape((K, K))
         
         plt.imshow(region, extent=[self.mins[0], self.maxs[0], self.mins[1], self.maxs[1]], origin="lower")
-        # plt.scatter(approx_rps[:,1], approx_rps[:,0], s=10, color="red", label="Estimate")
+        plt.scatter(approx_rps[:,1], approx_rps[:,0], s=10, color="red", label="Estimate")
         plt.scatter(exact_rps[:,1], exact_rps[:,0], s=10, color="green", label="Exact")
 
         plt.xticks([])
@@ -293,7 +310,7 @@ if __name__ == "__main__":
     exact_rps  = csi.get_exact_rps(test_x)
 
     print("Computing approximate RPs...")
-    approx_rps = [] #  csi.get_approx_rps(test_x, T=Ts[-1], cache_trajs=True)
+    approx_rps = csi.get_approx_rps()
 
     print("Performing visualization...")
     csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
