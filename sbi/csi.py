@@ -323,33 +323,34 @@ if __name__ == "__main__":
         encoder = pickle.load(f)
     encoder.to(device)
 
-    test_sim = 1
-    test_theta = prior.sample((test_sim,))
-    test_x = simulator(test_theta)
-    test_theta = test_theta[:,:proj_dim]
+    for sample_idx in range(10):
+        test_sim = 1
+        test_theta = prior.sample((test_sim,))
+        test_x = simulator(test_theta)
+        test_theta = test_theta[:,:proj_dim]
 
-    with open(os.path.join("minmax", f"{task_name}.pkl"), "rb") as f:
-        mins, maxs = pickle.load(f)
+        with open(os.path.join("minmax", f"{task_name}.pkl"), "rb") as f:
+            mins, maxs = pickle.load(f)
 
-    Ns = np.arange(2, 101, 5)
-    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=5, k=10, mins=mins, maxs=maxs, desired_coverage=0.95)
-    os.makedirs("results", exist_ok=True)
+        Ns = np.arange(2, 501, 5)
+        csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=5, k=10, mins=mins, maxs=maxs, desired_coverage=0.95)
+        os.makedirs("results", exist_ok=True)
 
-    csi.gen_test_samples(test_x)
+        csi.gen_test_samples(test_x)
 
-    print("Computing exact RPs...")
-    exact_rps  = csi.get_exact_rps(test_x)
-    exact_obj = csi.get_rps_obj(exact_rps)
-    
-    # print("Performing visualization...")
-    # approx_rps = csi.get_approx_rps(N=20)
-    # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
+        print("Computing exact RPs...")
+        exact_rps  = csi.get_exact_rps(test_x)
+        exact_obj = csi.get_rps_obj(exact_rps)
+        
+        # print("Performing visualization...")
+        # approx_rps = csi.get_approx_rps(N=20)
+        # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
 
-    print("Computing approximate RPs...")
-    optimality_gaps = []
-    for N in Ns:
-        approx_rps = csi.get_approx_rps(N=N)
-        optimality_gaps.append(csi.get_rps_obj(approx_rps) - exact_obj)
+        print("Computing approximate RPs...")
+        optimality_gaps = []
+        for N in Ns:
+            approx_rps = csi.get_approx_rps(N=N)
+            optimality_gaps.append(csi.get_rps_obj(approx_rps) - exact_obj)
 
-    with open(os.path.join("results", "dists", f"{task_name}.pkl"), "wb") as f:
-        pickle.dump((Ns, optimality_gaps), f)
+        with open(os.path.join("results", "dists", f"{task_name}_{sample_idx}.pkl"), "wb") as f:
+            pickle.dump((Ns, optimality_gaps), f)

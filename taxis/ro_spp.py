@@ -121,26 +121,26 @@ def cpo(cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffic, A, b):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--start_trial")
-    args = parser.parse_args()
-    start_trial = int(args.start_trial)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--start_trial")
+    # args = parser.parse_args()
+    # start_trial = int(args.start_trial)
     
     result_dir = os.path.join("results")
     os.makedirs(result_dir, exist_ok=True)
     
     alphas = [0.05]
     name_to_method = {
-        # "Box": normed_ball_solve_marg,
-        # "PTC-B": normed_ball_solve_cp,
-        # "Ellipsoid": normed_ball_solve_marg,
-        # "PTC-E": normed_ball_solve_cp,
-        "CPO": cpo,
+        "Box": normed_ball_solve_marg,
+        "PTC-B": normed_ball_solve_cp,
+        "Ellipsoid": normed_ball_solve_marg,
+        "PTC-E": normed_ball_solve_cp,
+        # "CPO": cpo,
     }
     method_values = {r"$\alpha$": alphas}
     method_std = {r"$\alpha$": alphas}
 
-    n_trials = 1
+    n_trials = 10
 
     # problem setup
     G = ox.graph_from_place("Manhattan, New York City, New York", network_type="drive")
@@ -174,7 +174,7 @@ if __name__ == "__main__":
             
             for trial_idx in range(n_trials):
                 if method_name == "CPO":
-                    value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[start_trial + trial_idx], A, b)
+                    value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b)
                 else:
                     if method_name in ["Box", "PTC-B"]:
                         value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b, norm=np.inf)
@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
                 trial_runs[trial_idx] = value_trial
                 trial_df = pd.DataFrame(trial_runs, index=[0])
-                trial_df.to_csv(os.path.join(result_dir, f"{method_name}_{start_trial}.csv"))
+                trial_df.to_csv(os.path.join(result_dir, f"{method_name}.csv"))
 
             if method_name not in method_values:
                 method_values[method_name] = []
