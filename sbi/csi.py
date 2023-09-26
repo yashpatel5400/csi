@@ -145,6 +145,8 @@ class CSI:
         K = 60
         theta_grid = self._get_grid(K=K)
         region = self._get_conformal_region(test_x, theta_grid)
+        self.explicit_region = theta_grid[np.where(region == 1)] # cache explicit region
+
         connected_components = self._get_connected_components(region)
         region_samples = [theta_grid[tuple(connected_component.T)] for connected_component in connected_components]
         return self._get_rps_cc(region_samples)
@@ -216,8 +218,7 @@ class CSI:
         u = u + center
         return u
 
-    def get_approx_rps(self):
-        N = 250 # samples per ball
+    def get_approx_rps(self, N):
         d = self.test_samples.shape[-1]
         
         samples = np.zeros((self.k, N, d))
@@ -298,6 +299,13 @@ class CSI:
         exact_to_approx_assoc = self._get_opt_correspondence(exact_rps, approx_rps)
         opt_correspondence_dist = exact_rps[exact_to_approx_assoc[:,0]] - approx_rps[exact_to_approx_assoc[:,1]]
         return np.sum(opt_correspondence_dist ** 2)
+    
+    def get_rps_obj(self, rps):
+        theta_tiled = np.transpose(np.tile(self.explicit_region, (rps.shape[0], 1, 1)), (1, 0, 2))
+        theta_diff = rps - theta_tiled
+        theta_norm = np.linalg.norm(theta_diff, axis=-1)
+        theta_score = np.min(theta_norm, axis=-1)
+        return np.mean(theta_score)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -323,30 +331,25 @@ if __name__ == "__main__":
     with open(os.path.join("minmax", f"{task_name}.pkl"), "rb") as f:
         mins, maxs = pickle.load(f)
 
-    Ts = list(range(500, 20_001, 100))
-    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=8, k=10, mins=mins, maxs=maxs, desired_coverage=0.95)
+    Ns = np.arange(2, 101, 5)
+    csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=5, k=10, mins=mins, maxs=maxs, desired_coverage=0.95)
     os.makedirs("results", exist_ok=True)
 
     csi.gen_test_samples(test_x)
 
     print("Computing exact RPs...")
     exact_rps  = csi.get_exact_rps(test_x)
+    exact_obj = csi.get_rps_obj(exact_rps)
+    
+    # print("Performing visualization...")
+    # approx_rps = csi.get_approx_rps(N=20)
+    # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
 
     print("Computing approximate RPs...")
-    approx_rps = csi.get_approx_rps()
+    optimality_gaps = []
+    for N in Ns:
+        approx_rps = csi.get_approx_rps(N=N)
+        optimality_gaps.append(csi.get_rps_obj(approx_rps) - exact_obj)
 
-    print("Performing visualization...")
-    csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
-    exit()
-
-    print("Computing distances...")
-    dists = []
-    for T in Ts:
-        approx_rps = csi.get_approx_rps(test_x, T=T, cache_trajs=True)
-        dists.append(csi.get_dist(exact_rps, approx_rps))
-    
     with open(os.path.join("results", "dists", f"{task_name}.pkl"), "wb") as f:
-        pickle.dump((Ts, dists), f)
-    
-    sns.lineplot(x=Ts, y=dists)
-    plt.savefig(os.path.join("results", f"{task_name}_dists.png"))
+        pickle.dump((Ns, optimality_gaps), f)
