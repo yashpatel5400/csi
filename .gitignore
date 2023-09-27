@@ -166,3 +166,5 @@ cython_debug/
 conformal-po/results
 conformal-po/volume.sbat
 conformal-po/slurm-*
+sbi/avg_volume.png
+conformal-po/volume_julia.sbat
