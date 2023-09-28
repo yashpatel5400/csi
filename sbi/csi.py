@@ -212,30 +212,34 @@ class CSI:
     def _mullers_sample_from_ball(self, center, r, N, d):
         u = np.random.normal(0, 1, (N, d))
         norm = np.linalg.norm(u, axis=1)
-        radius = np.random.uniform(0, 1, N)**(1/d)
+        radius = np.random.uniform(0, 1, N) ** (1/d)
         
         u = r * radius.reshape(-1, 1) * u / norm.reshape(-1, 1)
         u = u + center
         return u
 
     def get_approx_rps(self, N):
-        d = self.test_samples.shape[-1]
-        
-        samples = np.zeros((self.k, N, d))
-        voronoi_assignments = np.zeros((self.k, N))
+        edges = []
+        while len(edges) == 0:
+            d = self.test_samples.shape[-1]
+            
+            samples = np.zeros((self.k, N, d))
+            voronoi_assignments = np.zeros((self.k, N))
 
-        # fraction of samples in each ball in the associated voronoi cell
-        samples = np.apply_along_axis(self._mullers_sample_from_ball, axis=1, arr=self.test_samples, r=self.conformal_quantile, N=N, d=d)
-        samples = samples.reshape(self.k, N, 1, -1)
-        dist = np.linalg.norm(samples - self.test_samples, axis=-1)
-        voronoi_assignments = np.argmin(dist, axis=-1)
-        counts = np.sum(voronoi_assignments == np.arange(self.k).reshape(-1, 1), axis=1)
-        
-        samples = np.vstack([samples[k,:count,0,:] for k, count in enumerate(counts)]) # should subsample uniformly for counts but this is equivalent
-        
-        # create graph
-        kdt = spatial.KDTree(samples)
-        edges = kdt.query_pairs(1)
+            # fraction of samples in each ball in the associated voronoi cell
+            samples = np.apply_along_axis(self._mullers_sample_from_ball, axis=1, arr=self.test_samples, r=self.conformal_quantile, N=N, d=d)
+            samples = samples.reshape(self.k, N, 1, -1)
+            dist = np.linalg.norm(samples - self.test_samples, axis=-1)
+            voronoi_assignments = np.argmin(dist, axis=-1).flatten()
+            
+            flat_samples = samples.reshape(-1, *samples.shape[-2:])
+            voronoi_regions_samples = [flat_samples[voronoi_assignments == voronoi_idx] for voronoi_idx in range(self.k)]
+            min_voronoi_samples = np.min([len(voronoi_region_samples) for voronoi_region_samples in voronoi_regions_samples])
+            samples = np.vstack([voronoi_region_samples[:min_voronoi_samples,0,:] for voronoi_region_samples in voronoi_regions_samples])
+            
+            # create graph
+            kdt = spatial.KDTree(samples)
+            edges = kdt.query_pairs(self.conformal_quantile)
         G = nx.from_edgelist(edges)
 
         connected_components = list(nx.connected_components(G))        
@@ -323,6 +327,8 @@ if __name__ == "__main__":
         encoder = pickle.load(f)
     encoder.to(device)
 
+    # sample_idx = 0
+    # while sample_idx < 10:
     for sample_idx in range(10):
         test_sim = 1
         test_theta = prior.sample((test_sim,))
@@ -332,7 +338,7 @@ if __name__ == "__main__":
         with open(os.path.join("minmax", f"{task_name}.pkl"), "rb") as f:
             mins, maxs = pickle.load(f)
 
-        Ns = np.arange(2, 501, 5)
+        Ns = np.arange(5, 501, 5)
         csi = CSI(prior=prior, simulator=simulator, encoder=encoder, N=5, k=10, mins=mins, maxs=maxs, desired_coverage=0.95)
         os.makedirs("results", exist_ok=True)
 
@@ -341,7 +347,7 @@ if __name__ == "__main__":
         print("Computing exact RPs...")
         exact_rps  = csi.get_exact_rps(test_x)
         exact_obj = csi.get_rps_obj(exact_rps)
-        
+                    
         # print("Performing visualization...")
         # approx_rps = csi.get_approx_rps(N=20)
         # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
@@ -349,8 +355,10 @@ if __name__ == "__main__":
         print("Computing approximate RPs...")
         optimality_gaps = []
         for N in Ns:
+            print(f"Computing {N}...")
             approx_rps = csi.get_approx_rps(N=N)
             optimality_gaps.append(csi.get_rps_obj(approx_rps) - exact_obj)
 
         with open(os.path.join("results", "dists", f"{task_name}_{sample_idx}.pkl"), "wb") as f:
             pickle.dump((Ns, optimality_gaps), f)
+        # sample_idx += 1

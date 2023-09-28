@@ -22,5 +22,5 @@ for task_idx, task_name in enumerate(task_names):
     p = session.attached_pane
     p.send_keys("conda activate chig", enter=True)
     cmd = f"CUDA_VISIBLE_DEVICES={cuda_gpus[task_idx % len(cuda_gpus)]} python csi.py --task {task_name}"
-    # p.send_keys(cmd, enter=True)
+    p.send_keys(cmd, enter=True)
     print(f"{cmd}")
