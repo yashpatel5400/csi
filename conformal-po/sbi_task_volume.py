@@ -33,7 +33,7 @@ parser.add_argument('--alpha', default= 0.05, type=float,
                     help='alpha for conformal quantile')
 parser.add_argument('--N_cal', default=1000, type=int,
                     help='number of calibration samples')
-parser.add_argument('--N_test', default=100, type=int,
+parser.add_argument('--N_test', default=1000, type=int,
                     help='number of test samples')
 parser.add_argument('--samples_per_ball', default=100, type=int,
                     help='number of samples per ball')
@@ -252,28 +252,47 @@ if __name__ == "__main__":
     list_of_volumes = []
     list_of_avg_volumes = []
     volumes = multiple_experiment_run(q_hats, samples_per_ball, d, range_k, encoder, x_test)
-    for i in range(0, 10):
-        volumes = multiple_experiment_run(q_hats, samples_per_ball, d, range_k, encoder, x_test)
-        list_of_volumes.append(volumes)
-        list_of_avg_volumes.append(np.mean(volumes, axis=0))
+    # for i in range(0, 10):
+    #     volumes = multiple_experiment_run(q_hats, samples_per_ball, d, range_k, encoder, x_test)
+    #     list_of_volumes.append(volumes)
+    #     list_of_avg_volumes.append(np.mean(volumes, axis=0))
     
-    list_of_avg_volumes = np.array(list_of_avg_volumes)
-    print("Shape of list avg volume is {}".format(list_of_avg_volumes.shape))
+    # list_of_avg_volumes = np.array(list_of_avg_volumes)
+    # print("Shape of list avg volume is {}".format(list_of_avg_volumes.shape))
     # Making a directory to store the results
     result_dir = os.path.join("results", task_name)
     os.makedirs(result_dir, exist_ok=True)
 
+
     # Making plot for average volume
     
     avg_volume = np.mean(volumes, axis=0)
+    std_volume = np.std(volumes, axis=0)
     some = np.arange(1, max_k + 1)
     plt.figure()
     plt.plot(some, avg_volume)
+    plt.errorbar(some, avg_volume, yerr=std_volume, fmt='o')
     plt.xlabel("k")
     plt.ylabel("Average Volume across {} test samples".format(N_test))
     plt.title(task_name)
     plt.show()
     plt.savefig(os.path.join("results", task_name, "avg_volume_plot.png"))
+
+    # Making plot for average volume with error bars
+    # avg_avg_volume = np.mean(list_of_avg_volumes, axis=0)
+    # avg_std_volume = np.std(list_of_avg_volumes, axis=0)
+    # volume_err_min = avg_avg_volume - avg_std_volume
+    # volume_err_max = avg_avg_volume + avg_std_volume
+    # volume_err = [volume_err_min, volume_err_max]
+    # print("standard deviations are {}".format(avg_std_volume))
+    # plt.figure()
+    # plt.plot(some, avg_avg_volume)
+    # plt.errorbar(some, avg_avg_volume, yerr=avg_std_volume, fmt='o')
+    # plt.xlabel("k")
+    # plt.ylabel("Average Volume across {} test samples".format(N_test))
+    # plt.title(task_name)
+    # plt.show()
+    # plt.savefig(os.path.join("results", task_name, "avg_avg_volume_plot.png"))
 
     # Making plot for k/qhat
     plt.figure()
@@ -292,6 +311,10 @@ if __name__ == "__main__":
 
     volumes_df = pd.DataFrame(volumes)
     volumes_df.to_csv(os.path.join(result_dir, "volumes.csv"))
+
+    # avg_volumes_df = pd.DataFrame(np.hstack([some.reshape(-1, 1), avg_avg_volume.reshape(-1, 1), avg_std_volume]), columns=["k", "avg_volume", "std_volume"])
+    # avg_volumes_df.to_csv(os.path.join(result_dir, "avg_volumes.csv"))
+    
     with open(os.path.join(result_dir, "volumes.npy"), 'wb') as f:
         np.save(f, volumes)
 
