@@ -2,15 +2,15 @@
 import libtmux
 
 task_names = [
-    "bernoulli_glm",
-    "gaussian_linear_uniform",
-    "gaussian_linear",
-    "gaussian_mixture",
-    "lotka_volterra",
+    # "bernoulli_glm",
+    # "gaussian_linear_uniform",
+    # "gaussian_linear",
+    # "gaussian_mixture",
+    # "lotka_volterra",
     "sir",
     # "slcp_distractors",
-    "slcp",
-    "two_moons",
+    # "slcp",
+    # "two_moons",
 ]
 
 server = libtmux.Server()

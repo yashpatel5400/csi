@@ -43,7 +43,7 @@ def normed_ball_solve_generic(ball_center, ball_radius, A, b, norm):
     model.st(A @ w == b)
 
     model.solve(grb)
-    return model.get()
+    return w.get(), model.get()
 
 
 # *marginal* box constraint (i.e. just ignore contextual information)
@@ -79,7 +79,7 @@ def cpo(cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffic, A, b):
     conformal_quantile = np.quantile(c_cal_scores, q = 1 - alpha)
 
     eta = 5e-3 # learning rate
-    T = 2_500 # optimization steps
+    T = 2 # optimization steps
     w = np.random.random(A.shape[-1]) / 2
     
     opt_values = []
@@ -117,7 +117,7 @@ def cpo(cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffic, A, b):
         w = w_d.get()
 
         print(f"Completed step={t}")
-    return np.max(opt_value)
+    return w, np.max(opt_value)
 
 
 if __name__ == "__main__":
@@ -131,10 +131,10 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
-        "Box": normed_ball_solve_marg,
-        "PTC-B": normed_ball_solve_cp,
+        # "Box": normed_ball_solve_marg,
+        # "PTC-B": normed_ball_solve_cp,
         "Ellipsoid": normed_ball_solve_marg,
-        "PTC-E": normed_ball_solve_cp,
+        # "PTC-E": normed_ball_solve_cp,
         # "CPO": cpo,
     }
     method_values = {r"$\alpha$": alphas}
@@ -158,13 +158,15 @@ if __name__ == "__main__":
 
     A = nx.incidence_matrix(G, oriented=True).todense()
     b = np.zeros(len(G.nodes)) # b entries: 1 for source, -1 for target, 0 o.w.
-    b[1]   = -1
-    b[120] = 1 
+    b[8]   = -1
+    b[4350] = 1 
 
     # ---
     cal_true_traffics = np.load("cal_true_traffics.npy")
     cal_pred_traffics = np.load("cal_pred_traffics.npy")
     test_pred_traffics = np.load("test_pred_traffics.npy")
+
+    fixed_trial = 53 # HACK: just temporary (please remove if this gets checked in)
 
     for method_name in name_to_method:
         print(f"Running: {method_name}")
@@ -174,13 +176,17 @@ if __name__ == "__main__":
             
             for trial_idx in range(n_trials):
                 if method_name == "CPO":
-                    value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b)
+                    decision_trial, value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b)
                 else:
                     if method_name in ["Box", "PTC-B"]:
-                        value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b, norm=np.inf)
+                        decision_trial, value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b, norm=np.inf)
                     elif method_name in ["Ellipsoid", "PTC-E"]:
-                        value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[trial_idx], A, b, norm=2)
+                        decision_trial, value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b, norm=1)
                 values.append(value_trial)
+
+                with open(os.path.join(result_dir, f"path_{method_name}_{trial_idx}.pkl"), "wb") as f:
+                    pickle.dump(decision_trial, f)
+                exit()
 
                 trial_runs[trial_idx] = value_trial
                 trial_df = pd.DataFrame(trial_runs, index=[0])

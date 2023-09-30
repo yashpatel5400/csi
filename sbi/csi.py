@@ -231,11 +231,14 @@ class CSI:
             samples = samples.reshape(self.k, N, 1, -1)
             dist = np.linalg.norm(samples - self.test_samples, axis=-1)
             voronoi_assignments = np.argmin(dist, axis=-1).flatten()
+            sampled_assignments = np.array([[k] * N for k in range(self.k)]).flatten()
             
             flat_samples = samples.reshape(-1, *samples.shape[-2:])
-            voronoi_regions_samples = [flat_samples[voronoi_assignments == voronoi_idx] for voronoi_idx in range(self.k)]
-            min_voronoi_samples = np.min([len(voronoi_region_samples) for voronoi_region_samples in voronoi_regions_samples])
-            samples = np.vstack([voronoi_region_samples[:min_voronoi_samples,0,:] for voronoi_region_samples in voronoi_regions_samples])
+            samples = np.vstack(flat_samples[np.where(voronoi_assignments == sampled_assignments),0,:])
+            
+            # voronoi_regions_samples = [flat_samples[voronoi_assignments == voronoi_idx] for voronoi_idx in range(self.k)]
+            # min_voronoi_samples = np.min([len(voronoi_region_samples) for voronoi_region_samples in voronoi_regions_samples])
+            # samples = np.vstack([voronoi_region_samples[:min_voronoi_samples,0,:] for voronoi_region_samples in voronoi_regions_samples])
             
             # create graph
             kdt = spatial.KDTree(samples)
@@ -348,9 +351,10 @@ if __name__ == "__main__":
         exact_rps  = csi.get_exact_rps(test_x)
         exact_obj = csi.get_rps_obj(exact_rps)
                     
-        # print("Performing visualization...")
-        # approx_rps = csi.get_approx_rps(N=20)
-        # csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
+        # if sample_idx == 0:
+        #     print("Performing visualization...")
+        #     approx_rps = csi.get_approx_rps(N=20)
+        #     csi.viz_rps(test_x, exact_rps, approx_rps, os.path.join("results", f"{task_name}_rps.png"))
 
         print("Computing approximate RPs...")
         optimality_gaps = []
