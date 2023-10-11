@@ -282,9 +282,9 @@ if __name__ == "__main__":
     prior = task.get_prior()
     simulator = task.get_simulator()
 
-    # proj_dim = 4 # to consider a projected, lower-dimensional version of the problem
+    proj_dim = 2 # to consider a projected, lower-dimensional version of the problem
     setup_theta, setup_x = generate_data(prior, simulator, 100, return_theta=True) 
-    # setup_theta = setup_theta[:,:proj_dim]
+    setup_theta = setup_theta[:,:proj_dim]
 
     mb_size = 50
     device = f"cuda:0"
@@ -303,7 +303,7 @@ if __name__ == "__main__":
     save_iterate = 1_000
     for j in range(5_001):
         theta, x = generate_data(prior, simulator, mb_size, return_theta=True)
-        # theta = theta[:,:proj_dim]
+        theta = theta[:,:proj_dim]
         optimizer.zero_grad()
         loss = -1 * encoder.log_prob(theta.to(device), x.to(device)).mean()
         loss.backward()

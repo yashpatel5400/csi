@@ -16,10 +16,15 @@ import argparse
 
 import os
 import pickle
+import sys, os
 
-# this is some egregious code, but will fix later
-ro_tasks = ["knapsack", "spp"]
-ro_task = "spp"
+# Disable
+def blockPrint():
+    sys.stdout = open(os.devnull, 'w')
+
+# Restore
+def enablePrint():
+    sys.stdout = sys.__stdout__
 
 class FeedforwardNN(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=64):
@@ -100,7 +105,26 @@ def get_point_predictor(x_train, c_train):
     return model
 
 
-def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B, A, b):
+# *marginal* box constraint (i.e. just ignore contextual information)
+def nominal_solve(generative_model, alpha, x, c_true, p, B):
+    # perform RO over constraint region
+    model = ro.Model()
+
+    w = model.dvar(c_true.shape[-1])
+    c = c_true.detach().cpu().numpy()
+
+    model.min(-c @ w)
+    model.st(w <= 1)
+    model.st(w >= 0)
+    model.st(p @ w <= B)
+    
+    blockPrint()
+    model.solve(grb)
+    enablePrint()
+    return 1, model.get()
+
+
+def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B):
     c_true_np = c_true.detach().cpu().numpy()
     covered = int(np.all(c_box_lb <= c_true_np) and np.all(c_true_np <= c_box_ub))
 
@@ -111,42 +135,37 @@ def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B, A, b):
     c = model.rvar(c_true.shape[-1])
     uset = (c_box_lb <= c, c <= c_box_ub)
 
-    if ro_task == "knapsack":
-        model.minmax(-c @ w, uset)
-        model.st(w <= 1)
-        model.st(w >= 0)
-        model.st(p @ w <= B)
-    elif ro_task == "spp":
-        model.minmax(c @ w, uset)
-        model.st(w <= 1)
-        model.st(w >= 0)
-        model.st(A @ w == b) # A: adjacency matrix, b: 1 for source, -1 for target, 0 o.w.
-
+    model.minmax(-c @ w, uset)
+    model.st(w <= 1)
+    model.st(w >= 0)
+    model.st(p @ w <= B)
+    blockPrint()
     model.solve(grb)
+    enablePrint()
     return covered, model.get()
 
 
 # *marginal* box constraint (i.e. just ignore contextual information)
-def box_solve_marg(point_predictor, alpha, x, c_true, p, B, A, b):
+def box_solve_marg(generative_model, alpha, x, c_true, p, B):
     alpha = alpha / c_true.shape[-1] # Bonferroni
     c_box_lb = np.quantile(c_dataset, q=(alpha / 2), axis=0)
     c_box_ub = np.quantile(c_dataset, q=(1 - alpha / 2), axis=0)
-    return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B, A, b)
+    return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B)
 
 
 # *conditional* box conformal constraint (PTC-B)
-def box_solve_cp(point_predictor, alpha, x, c_true, p, B, A, b):
-    c_pred = point_predictor(x_cal)
+def box_solve_cp(generative_model, alpha, x, c_true, p, B):
+    c_pred = generative_model.sample(1, x_cal).squeeze()
     box_cal_scores = np.linalg.norm((c_pred - c_cal).detach().cpu().numpy(), np.inf, axis=1)
     conformal_quantile = np.quantile(box_cal_scores, q=1 - alpha, axis=0)
 
-    c_box_hat = point_predictor(x).detach().cpu().numpy()
+    c_box_hat = generative_model.sample(1, x.unsqueeze(0)).squeeze().detach().cpu().numpy()
     c_box_lb = c_box_hat - conformal_quantile
     c_box_ub = c_box_hat + conformal_quantile
     return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B)
 
 
-def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B, A, b):
+def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B):
     # perform RO over constraint region
     model = ro.Model()
 
@@ -162,12 +181,14 @@ def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, 
     model.st(w >= 0)
     model.st(p @ w <= B)
 
+    blockPrint()
     model.solve(grb)
+    enablePrint()
     return covered, model.get()
 
 
 # *marginal* ellipsoid constraint
-def ellipsoid_solve_marg(point_predictor, alpha, x, c_true, p, B, A, b):
+def ellipsoid_solve_marg(generative_model, alpha, x, c_true, p, B):
     mu = np.mean(c_dataset, axis=0)
     cov = np.cov(c_dataset.T)
     sqrt_cov_inv = np.linalg.cholesky(np.linalg.inv(cov))
@@ -178,8 +199,8 @@ def ellipsoid_solve_marg(point_predictor, alpha, x, c_true, p, B, A, b):
 
 
 # *conditional* ellipsoid conformal constraint (PTC-E)
-def ellipsoid_solve_cp(point_predictor, alpha, x, c_true, p, B, A, b):
-    c_pred = point_predictor(x_cal)
+def ellipsoid_solve_cp(generative_model, alpha, x, c_true, p, B):
+    c_pred = generative_model.sample(1, x_cal).squeeze()
     residuals = (c_pred - c_cal).detach().cpu().numpy()
 
     cov = np.cov(residuals.T)
@@ -187,7 +208,7 @@ def ellipsoid_solve_cp(point_predictor, alpha, x, c_true, p, B, A, b):
     ellipsoid_cal_scores = np.linalg.norm(residuals @ sqrt_cov_inv, axis=1)
     conformal_quantile = np.quantile(ellipsoid_cal_scores, q=1 - alpha, axis=0)
 
-    c_ellipsoid_hat = point_predictor(x).detach().cpu().numpy()   
+    c_ellipsoid_hat = generative_model.sample(1, x.unsqueeze(0)).squeeze().detach().cpu().numpy()
     return ellipsoid_solve_generic(c_ellipsoid_hat, sqrt_cov_inv, conformal_quantile, c_true, p, B)
 
 
@@ -197,8 +218,8 @@ def grad_f(w, c):
 
 
 # generative model-based prediction regions
-def cpo(generative_model, alpha, x, c_true, p, B, A, b):
-    k = 50
+def cpo(generative_model, alpha, x, c_true, p, B):
+    k = 10
 
     c_cal_hat = generative_model.sample(k, x_cal).detach().cpu().numpy()
     c_cal_tiled = np.transpose(np.tile(c_cal.detach().cpu().numpy(), (k, 1, 1)), (1, 0, 2))
@@ -215,6 +236,7 @@ def cpo(generative_model, alpha, x, c_true, p, B, A, b):
     c_score = np.min(c_norm, axis=-1)
 
     contained = int(c_score < conformal_quantile)
+    print(f"Contained: {bool(contained)}")
     c_region_centers = c_region_centers[0]
 
     eta = 5e-3 # learning rate
@@ -232,7 +254,9 @@ def cpo(generative_model, alpha, x, c_true, p, B, A, b):
 
             model.max(-c @ w)
             model.st(rso.norm(c - c_region_center, 2) <= conformal_quantile)
+            blockPrint()
             model.solve(grb)
+            enablePrint()
 
             maxizer_per_region.append(c.get())
             opt_value.append(model.get())
@@ -247,12 +271,16 @@ def cpo(generative_model, alpha, x, c_true, p, B, A, b):
         w_d = model.dvar(c_true.shape[-1])
 
         model.min(rso.norm(w_d - w_temp, 2))
+        model.st(w_d <= 1)
+        model.st(w_d >= 0)
         model.st(p @ w_d <= B)
+        blockPrint()
         model.solve(grb)
+        enablePrint()
 
         w = w_d.get()
 
-        print(f"Completed step={t}")
+        print(f"Completed step={t} -- {np.max(opt_value)}")
     return contained, np.max(opt_value)
 
 
@@ -268,7 +296,7 @@ if __name__ == "__main__":
 
     (x_train, x_cal, x_test), (c_train, c_cal, c_test) = get_data(prior, simulator)
     c_dataset = torch.vstack([c_train, c_cal]).detach().cpu().numpy() # for cases where only marginal draws are used, no splitting occurs
-    point_predictor = get_point_predictor(x_train, c_train)
+    # point_predictor = get_point_predictor(x_train, c_train)
 
     cached_fn = os.path.join("trained", f"{task_name}.nf")
     with open(cached_fn, "rb") as f:
@@ -280,10 +308,11 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
-        "Box": box_solve_marg,
-        "PTC-B": box_solve_cp,
-        "Ellipsoid": ellipsoid_solve_marg,
-        "PTC-E": ellipsoid_solve_cp,
+        "Nominal": nominal_solve,
+        # "Box": box_solve_marg,
+        # "PTC-B": box_solve_cp,
+        # "Ellipsoid": ellipsoid_solve_marg,
+        # "PTC-E": ellipsoid_solve_cp,
         "CPO": cpo,
     }
     method_coverages = {r"$\alpha$": alphas}
@@ -293,13 +322,10 @@ if __name__ == "__main__":
     n_trials = 10
 
     # want these to be consistent for comparison between methods, so generate once beforehand
-    if ro_task == "knapsack":
-        ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
-        us = np.random.uniform(low=0, high=1, size=n_trials)
-        Bs = np.random.uniform(np.max(ps, axis=1), np.sum(ps, axis=1) - us * np.max(ps, axis=1))
-    elif ro_task == "spp":
-        As = 1
-
+    ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
+    us = np.random.uniform(low=0, high=1, size=n_trials)
+    Bs = np.random.uniform(np.max(ps, axis=1), np.sum(ps, axis=1) - us * np.max(ps, axis=1))
+    
     for method_name in name_to_method:
         print(f"Running: {method_name}")
         for alpha in alphas:
@@ -313,10 +339,7 @@ if __name__ == "__main__":
                 p = ps[trial_idx]
                 B = Bs[trial_idx]
                 
-                if method_name == "CPO":
-                    (covered_trial, value_trial) = name_to_method[method_name](generative_model, alpha, x, c, p, B)
-                else:
-                    (covered_trial, value_trial) = name_to_method[method_name](point_predictor, alpha, x, c, p, B)
+                (covered_trial, value_trial) = name_to_method[method_name](generative_model, alpha, x, c, p, B)
                 covered += covered_trial
                 values.append(value_trial)
 

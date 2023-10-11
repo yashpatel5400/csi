@@ -79,7 +79,7 @@ def cpo(cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffic, A, b):
     conformal_quantile = np.quantile(c_cal_scores, q = 1 - alpha)
 
     eta = 5e-3 # learning rate
-    T = 2 # optimization steps
+    T = 2_500 # optimization steps
     w = np.random.random(A.shape[-1]) / 2
     
     opt_values = []
@@ -131,9 +131,10 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
+        "Nominal": normed_ball_solve_marg,
         # "Box": normed_ball_solve_marg,
         # "PTC-B": normed_ball_solve_cp,
-        "Ellipsoid": normed_ball_solve_marg,
+        # "Ellipsoid": normed_ball_solve_marg,
         # "PTC-E": normed_ball_solve_cp,
         # "CPO": cpo,
     }
