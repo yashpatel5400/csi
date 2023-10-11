@@ -30,6 +30,21 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
 
+# *marginal* box constraint (i.e. just ignore contextual information)
+def nominal_solve(cal_true_traffic, cal_pred_traffics, alpha, test_pred_traffic, A, b, norm):
+    model = ro.Model()
+
+    w = model.dvar(A.shape[-1])
+    print(cal_true_traffic.shape)
+
+    model.min(cal_true_traffic @ w)
+    model.st(w <= 1)
+    model.st(w >= 0)
+    model.st(A @ w == b)
+
+    model.solve(grb)
+    return 1, model.get()
+
 def normed_ball_solve_generic(ball_center, ball_radius, A, b, norm):
     model = ro.Model()
 
@@ -131,7 +146,7 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
-        "Nominal": normed_ball_solve_marg,
+        "Nominal": nominal_solve,
         # "Box": normed_ball_solve_marg,
         # "PTC-B": normed_ball_solve_cp,
         # "Ellipsoid": normed_ball_solve_marg,
@@ -179,15 +194,15 @@ if __name__ == "__main__":
                 if method_name == "CPO":
                     decision_trial, value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b)
                 else:
-                    if method_name in ["Box", "PTC-B"]:
-                        decision_trial, value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b, norm=np.inf)
+                    if method_name in ["Box", "PTC-B", "Nominal"]:
+                        decision_trial, value_trial = name_to_method[method_name](cal_true_traffics[fixed_trial], cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b, norm=np.inf)
                     elif method_name in ["Ellipsoid", "PTC-E"]:
                         decision_trial, value_trial = name_to_method[method_name](cal_true_traffics, cal_pred_traffics, alpha, test_pred_traffics[fixed_trial], A, b, norm=1)
                 values.append(value_trial)
 
-                with open(os.path.join(result_dir, f"path_{method_name}_{trial_idx}.pkl"), "wb") as f:
-                    pickle.dump(decision_trial, f)
-                exit()
+                # with open(os.path.join(result_dir, f"path_{method_name}_{trial_idx}.pkl"), "wb") as f:
+                #     pickle.dump(decision_trial, f)
+                # exit()
 
                 trial_runs[trial_idx] = value_trial
                 trial_df = pd.DataFrame(trial_runs, index=[0])
@@ -196,6 +211,7 @@ if __name__ == "__main__":
             if method_name not in method_values:
                 method_values[method_name] = []
                 method_std[method_name] = []
+            exit()
 
             method_values[method_name].append(np.mean(values))
             method_std[method_name].append(np.std(values))

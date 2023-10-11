@@ -309,10 +309,10 @@ if __name__ == "__main__":
     alphas = [0.05]
     name_to_method = {
         "Nominal": nominal_solve,
-        # "Box": box_solve_marg,
-        # "PTC-B": box_solve_cp,
-        # "Ellipsoid": ellipsoid_solve_marg,
-        # "PTC-E": ellipsoid_solve_cp,
+        "Box": box_solve_marg,
+        "PTC-B": box_solve_cp,
+        "Ellipsoid": ellipsoid_solve_marg,
+        "PTC-E": ellipsoid_solve_cp,
         "CPO": cpo,
     }
     method_coverages = {r"$\alpha$": alphas}
