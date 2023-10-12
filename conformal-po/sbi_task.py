@@ -17,6 +17,7 @@ import argparse
 import os
 import pickle
 import sys, os
+import multiprocessing
 
 # Disable
 def blockPrint():
@@ -108,41 +109,83 @@ def get_point_predictor(x_train, c_train):
 # *marginal* box constraint (i.e. just ignore contextual information)
 def nominal_solve(generative_model, alpha, x, c_true, p, B):
     # perform RO over constraint region
+    
+    # leaving this here if anyone is curious to see that vectorizing linear optimization is equivalent
+    # ind_values = []
+    # for i in range(len(c_true)):
+    #     model = ro.Model()
+
+    #     w = model.dvar(c_true[i].shape)
+    #     c_i = c_true.detach().cpu().numpy()[i]
+        
+    #     model.min(-(c_i * w).sum())
+    #     model.st(w <= 1)
+    #     model.st(w >= 0)
+    #     model.st(p[i] @ w <= B[i])
+        
+    #     blockPrint()
+    #     model.solve(grb)
+    #     enablePrint()
+    #     ind_values.append(model.get())
+
     model = ro.Model()
 
-    w = model.dvar(c_true.shape[-1])
+    w = model.dvar(c_true.shape)
     c = c_true.detach().cpu().numpy()
-
-    model.min(-c @ w)
+    
+    model.min(-(c * w).sum())
     model.st(w <= 1)
     model.st(w >= 0)
-    model.st(p @ w <= B)
+    model.st(p[i] @ w[i,:] <= B[i] for i in range(len(B)))
     
     blockPrint()
     model.solve(grb)
     enablePrint()
-    return 1, model.get()
+    
+    w_star = w.get()
+    optima = np.sum(-(c * w_star), axis=-1)
+    return 1, optima # model.get()
 
 
 def box_solve_generic(c_box_lb, c_box_ub, c_true, p, B):
-    c_true_np = c_true.detach().cpu().numpy()
-    covered = int(np.all(c_box_lb <= c_true_np) and np.all(c_true_np <= c_box_ub))
-
+    # c_true_np = c_true.detach().cpu().numpy()
+    # covered = int(np.all(c_box_lb <= c_true_np) and np.all(c_true_np <= c_box_ub))
+    covered = 0
+    
     # perform RO over constraint region
     model = ro.Model()
 
-    w = model.dvar(c_true.shape[-1])
-    c = model.rvar(c_true.shape[-1])
+    w = model.dvar(c_true.shape)
+    c = model.rvar(c_true.shape)
     uset = (c_box_lb <= c, c <= c_box_ub)
 
-    model.minmax(-c @ w, uset)
+    model.minmax(-(c * w).sum(), uset)
     model.st(w <= 1)
     model.st(w >= 0)
-    model.st(p @ w <= B)
+    # model.st(p @ w <= B)
+    model.st(p[i] @ w[i,:] <= B[i] for i in range(len(B)))
     blockPrint()
     model.solve(grb)
     enablePrint()
-    return covered, model.get()
+
+    w_star = w.get()
+    
+    # perform RO over constraint region
+    model = ro.Model()
+    c = model.dvar(c_true.shape)
+    
+    model.max(-(c * w_star).sum())
+    model.st(c_box_lb <= c[i] for i in range(len(B)))
+    model.st(c[i] <= c_box_ub for i in range(len(B)))
+    blockPrint()
+    model.solve(grb)
+    enablePrint()
+
+    c_star = c.get()
+    
+    # calculate per trial opt
+    optima = np.sum(-(c_star * w_star), axis=-1)
+    return covered, optima
 
 
 # *marginal* box constraint (i.e. just ignore contextual information)
@@ -159,7 +202,7 @@ def box_solve_cp(generative_model, alpha, x, c_true, p, B):
     box_cal_scores = np.linalg.norm((c_pred - c_cal).detach().cpu().numpy(), np.inf, axis=1)
     conformal_quantile = np.quantile(box_cal_scores, q=1 - alpha, axis=0)
 
-    c_box_hat = generative_model.sample(1, x.unsqueeze(0)).squeeze().detach().cpu().numpy()
+    c_box_hat = generative_model.sample(1, x).squeeze().detach().cpu().numpy()
     c_box_lb = c_box_hat - conformal_quantile
     c_box_ub = c_box_hat + conformal_quantile
     return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B)
@@ -217,70 +260,92 @@ def grad_f(w, c):
     return -c
 
 
+def inner_opt(args):
+    w, c_shape, conformal_quantile, c_region_center = args
+    model = ro.Model()
+    c = model.dvar(c_shape)
+
+    model.max(-(c * w).sum())
+    model.st(rso.norm(c[i] - c_region_center[i], 2) <= conformal_quantile for i in range(c_shape[0]))
+    blockPrint()
+    model.solve(grb)
+    enablePrint()
+
+    return c.get()#, model.get()
+
+
 # generative model-based prediction regions
 def cpo(generative_model, alpha, x, c_true, p, B):
-    k = 10
+    def get_quantile(k = 10):
+        c_cal_hat = generative_model.sample(k, x_cal).detach().cpu().numpy()
+        c_cal_tiled = np.transpose(np.tile(c_cal.detach().cpu().numpy(), (k, 1, 1)), (1, 0, 2))
+        c_cal_diff = c_cal_hat - c_cal_tiled
+        c_cal_norms = np.linalg.norm(c_cal_diff, axis=-1)
+        c_cal_scores = np.min(c_cal_norms, axis=-1)
 
-    c_cal_hat = generative_model.sample(k, x_cal).detach().cpu().numpy()
-    c_cal_tiled = np.transpose(np.tile(c_cal.detach().cpu().numpy(), (k, 1, 1)), (1, 0, 2))
-    c_cal_diff = c_cal_hat - c_cal_tiled
-    c_cal_norms = np.linalg.norm(c_cal_diff, axis=-1)
-    c_cal_scores = np.min(c_cal_norms, axis=-1)
+        return np.quantile(c_cal_scores, q = 1 - alpha)
 
-    conformal_quantile = np.quantile(c_cal_scores, q = 1 - alpha)
-
-    c_region_centers = generative_model.sample(k, x.unsqueeze(0)).detach().cpu().numpy()
-    c_tiled = np.transpose(np.tile(c_true.detach().cpu().numpy(), (k, 1, 1)), (1, 0, 2))
+    K = 10
+    conformal_quantile = get_quantile(K)
+    c_region_centers = generative_model.sample(K, x).detach().cpu().numpy()
+    c_tiled = np.transpose(np.tile(c_true.detach().cpu().numpy(), (K, 1, 1)), (1, 0, 2))
     c_diff = c_region_centers - c_tiled
     c_norm = np.linalg.norm(c_diff, axis=-1)
     c_score = np.min(c_norm, axis=-1)
-
-    contained = int(c_score < conformal_quantile)
-    print(f"Contained: {bool(contained)}")
-    c_region_centers = c_region_centers[0]
+    
+    contained = np.sum(c_score < conformal_quantile) / len(c_score)
+    print(f"Contained: {contained}")
+    # c_region_centers = c_region_centers[0]
 
     eta = 5e-3 # learning rate
-    T = 2_500 # optimization steps
+    T = 2_000 # optimization steps
 
-    w = np.random.random(c_true.shape[-1]) / 2
-    opt_values = []
+    pool = multiprocessing.Pool(K)
+
+    w = np.random.random(c_true.shape) / 2
+    
+    # start optimization loop
     for t in range(T):
-        maxizer_per_region = []
-        opt_value = []
+        # maxizer_per_region = []
+        # opt_value = []
+        # maxizer, opt = inner_opt((w, c_true.shape, conformal_quantile, c_region_centers[:,0]))
+        # maxizer_per_region = np.array([maxizer])
+        # opt_value = np.array([opt])
 
-        for c_region_center in c_region_centers:
-            model = ro.Model()
-            c = model.dvar(c_true.shape[-1])
+        maxizer_per_region = np.array(list(zip(*pool.map(
+                                                inner_opt,
+                                                [(w, c_true.shape, conformal_quantile, c_region_centers[:,k]) for k in range(K)]
+                                                )
+                                            ))) # batch_size x K x c_dim
+        w_tiled = np.transpose(np.tile(w, (K, 1, 1)), (1, 0, 2))
 
-            model.max(-c @ w)
-            model.st(rso.norm(c - c_region_center, 2) <= conformal_quantile)
-            blockPrint()
-            model.solve(grb)
-            enablePrint()
-
-            maxizer_per_region.append(c.get())
-            opt_value.append(model.get())
-
-        opt_values.append(np.max(opt_value))
-        c_star = maxizer_per_region[np.argmax(opt_value)]
+        opt_value_per_region = np.sum(-(maxizer_per_region * w_tiled), axis=-1)
+        opt_value = np.max(opt_value_per_region, axis=-1)        
+        c_star_idx = np.argmax(opt_value_per_region, axis=-1)        
+        c_star = maxizer_per_region[np.arange(maxizer_per_region.shape[0]), c_star_idx] # yuck, is this really the best way?
+        
+        # c_star = maxizer_per_region[np.argmax(opt_value)]
         grad = grad_f(w, c_star)
-        w_temp = w - eta * grad
+        w_temp = (w - eta * grad).flatten()
 
         # projection step: there's probably a better way of doing this?
         model = ro.Model()
-        w_d = model.dvar(c_true.shape[-1])
+        w_d = model.dvar(w_temp.shape)
 
-        model.min(rso.norm(w_d - w_temp, 2))
+        model.min(rso.sumsqr(w_d - w_temp))
         model.st(w_d <= 1)
         model.st(w_d >= 0)
-        model.st(p @ w_d <= B)
+
+        model.st(p[i] @ w_d[i * p.shape[-1]:(i+1) * p.shape[-1]] <= B[i] for i in range(len(B)))
         blockPrint()
         model.solve(grb)
         enablePrint()
 
         w = w_d.get()
+        w = w.reshape(c_true.shape)
 
-        print(f"Completed step={t} -- {np.max(opt_value)}")
+        print(f"Completed step={t} -- {opt_value}")
+    pool.close()
     return contained, np.max(opt_value)
 
 
@@ -308,18 +373,18 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
-        "Nominal": nominal_solve,
-        "Box": box_solve_marg,
-        "PTC-B": box_solve_cp,
+        # "Nominal": nominal_solve,
+        # "Box": box_solve_marg,
+        # "PTC-B": box_solve_cp,
         "Ellipsoid": ellipsoid_solve_marg,
-        "PTC-E": ellipsoid_solve_cp,
-        "CPO": cpo,
+        # "PTC-E": ellipsoid_solve_cp,
+        # "CPO": cpo,
     }
     method_coverages = {r"$\alpha$": alphas}
     method_values = {r"$\alpha$": alphas}
     method_std = {r"$\alpha$": alphas}
 
-    n_trials = 10
+    n_trials = 5
 
     # want these to be consistent for comparison between methods, so generate once beforehand
     ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
@@ -334,10 +399,10 @@ if __name__ == "__main__":
             trial_runs = {}
             
             for trial_idx in range(n_trials):
-                x = x_test[trial_idx]
-                c = c_test[trial_idx]
-                p = ps[trial_idx]
-                B = Bs[trial_idx]
+                x = x_test[:n_trials]
+                c = c_test[:n_trials]
+                p = ps[:n_trials]
+                B = Bs[:n_trials]
                 
                 (covered_trial, value_trial) = name_to_method[method_name](generative_model, alpha, x, c, p, B)
                 covered += covered_trial
