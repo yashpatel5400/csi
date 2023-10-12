@@ -60,14 +60,13 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 device = ("cuda" if torch.cuda.is_available() else "cpu")
 
-def get_data(prior, simulator):
+def get_data(prior, simulator, N_test):
     # used for setting up dimensions
     sample_c = prior.sample((1,))
     sample_x = simulator(sample_c)
 
     N = 2_000
     N_train = 1000
-    N_test  = 1000
 
     c_dataset = prior.sample((N,))
     x_dataset = simulator(c_dataset)
@@ -208,16 +207,15 @@ def box_solve_cp(generative_model, alpha, x, c_true, p, B):
     return box_solve_generic(c_box_lb, c_box_ub, c_true, p, B)
 
 
-def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B):
-    # perform RO over constraint region
+def ellipsoid_solve_ind(args):
+    c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B = args
     model = ro.Model()
 
     w = model.dvar(c_true.shape[-1])
     c = model.rvar(c_true.shape[-1])
 
     uset = rso.norm((c - c_ellipse_center).T @ c_ellipse_axes, 2) <= c_ellipse_cutoff
-    c_true_np = c_true.detach().cpu().numpy()
-    covered = int(np.linalg.norm((c_true_np - c_ellipse_center).T @ c_ellipse_axes) <= c_ellipse_cutoff)
+    # covered = int(np.linalg.norm((c_true - c_ellipse_center).T @ c_ellipse_axes) <= c_ellipse_cutoff)
 
     model.minmax(-c @ w, uset)
     model.st(w <= 1)
@@ -227,7 +225,21 @@ def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, 
     blockPrint()
     model.solve(grb)
     enablePrint()
-    return covered, model.get()
+    print(model.get())
+    return model.get()
+
+
+def ellipsoid_solve_generic(c_ellipse_center, c_ellipse_axes, c_ellipse_cutoff, c_true, p, B):
+    # perform RO over constraint region
+    c_true_np = c_true.detach().cpu().numpy()
+    
+    pool = multiprocessing.Pool(25)
+    optima = np.array([*pool.map(
+                                                ellipsoid_solve_ind,
+                                                [(c_ellipse_center[i], c_ellipse_axes, c_ellipse_cutoff, c_true_np, p[i], B[i]) for i in range(len(p))]
+                                                )
+                                            ])
+    return 1, optima
 
 
 # *marginal* ellipsoid constraint
@@ -238,7 +250,8 @@ def ellipsoid_solve_marg(generative_model, alpha, x, c_true, p, B):
     mah_dists = np.linalg.norm((c_dataset - mu) @ sqrt_cov_inv, axis=1)
     cutoff = np.quantile(mah_dists, q=1 - alpha)
     
-    return ellipsoid_solve_generic(mu, sqrt_cov_inv, cutoff, c_true, p, B)
+    tiled_mu = np.tile(mu, (x.shape[0], 1))
+    return ellipsoid_solve_generic(tiled_mu, sqrt_cov_inv, cutoff, c_true, p, B)
 
 
 # *conditional* ellipsoid conformal constraint (PTC-E)
@@ -251,7 +264,7 @@ def ellipsoid_solve_cp(generative_model, alpha, x, c_true, p, B):
     ellipsoid_cal_scores = np.linalg.norm(residuals @ sqrt_cov_inv, axis=1)
     conformal_quantile = np.quantile(ellipsoid_cal_scores, q=1 - alpha, axis=0)
 
-    c_ellipsoid_hat = generative_model.sample(1, x.unsqueeze(0)).squeeze().detach().cpu().numpy()
+    c_ellipsoid_hat = generative_model.sample(1, x).squeeze().detach().cpu().numpy()
     return ellipsoid_solve_generic(c_ellipsoid_hat, sqrt_cov_inv, conformal_quantile, c_true, p, B)
 
 
@@ -359,7 +372,11 @@ if __name__ == "__main__":
     prior = task.get_prior_dist()
     simulator = task.get_simulator()
 
-    (x_train, x_cal, x_test), (c_train, c_cal, c_test) = get_data(prior, simulator)
+    n_trials   = 10
+    trial_size = 100
+    N_test = n_trials * trial_size
+
+    (x_train, x_cal, x_test), (c_train, c_cal, c_test) = get_data(prior, simulator, N_test=N_test)
     c_dataset = torch.vstack([c_train, c_cal]).detach().cpu().numpy() # for cases where only marginal draws are used, no splitting occurs
     # point_predictor = get_point_predictor(x_train, c_train)
 
@@ -373,22 +390,20 @@ if __name__ == "__main__":
     
     alphas = [0.05]
     name_to_method = {
-        # "Nominal": nominal_solve,
-        # "Box": box_solve_marg,
-        # "PTC-B": box_solve_cp,
+        "Nominal": nominal_solve,
+        "Box": box_solve_marg,
+        "PTC-B": box_solve_cp,
         "Ellipsoid": ellipsoid_solve_marg,
-        # "PTC-E": ellipsoid_solve_cp,
-        # "CPO": cpo,
+        "PTC-E": ellipsoid_solve_cp,
+        "CPO": cpo,
     }
     method_coverages = {r"$\alpha$": alphas}
     method_values = {r"$\alpha$": alphas}
     method_std = {r"$\alpha$": alphas}
 
-    n_trials = 5
-
     # want these to be consistent for comparison between methods, so generate once beforehand
-    ps = np.random.randint(low=0, high=1000, size=(n_trials, c_dataset.shape[-1]))
-    us = np.random.uniform(low=0, high=1, size=n_trials)
+    ps = np.random.randint(low=0, high=1000, size=(N_test, c_dataset.shape[-1]))
+    us = np.random.uniform(low=0, high=1, size=N_test)
     Bs = np.random.uniform(np.max(ps, axis=1), np.sum(ps, axis=1) - us * np.max(ps, axis=1))
     
     for method_name in name_to_method:
@@ -399,17 +414,15 @@ if __name__ == "__main__":
             trial_runs = {}
             
             for trial_idx in range(n_trials):
-                x = x_test[:n_trials]
-                c = c_test[:n_trials]
-                p = ps[:n_trials]
-                B = Bs[:n_trials]
+                x = x_test[trial_idx * trial_size:(trial_idx + 1) * trial_size]
+                c = c_test[trial_idx * trial_size:(trial_idx + 1) * trial_size]
+                p =     ps[trial_idx * trial_size:(trial_idx + 1) * trial_size]
+                B =     Bs[trial_idx * trial_size:(trial_idx + 1) * trial_size]
                 
-                (covered_trial, value_trial) = name_to_method[method_name](generative_model, alpha, x, c, p, B)
+                (covered_trial, value_trials) = name_to_method[method_name](generative_model, alpha, x, c, p, B)
                 covered += covered_trial
-                values.append(value_trial)
-
-                trial_runs[trial_idx] = value_trial
-                trial_df = pd.DataFrame(trial_runs, index=[0])
+                values += list(value_trials)
+                trial_df = pd.DataFrame(values)
                 trial_df.to_csv(os.path.join(result_dir, f"{method_name}.csv"))
 
             if method_name not in method_coverages:
