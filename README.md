@@ -15,7 +15,7 @@ Department of Statistics, University of Michigan.
 </p>
 <div align='center'>
     <a href='https://arxiv.org/abs/2305.14275'><img src='https://img.shields.io/badge/Paper-Arxiv-red'></a>
-    <a href='https://proceedings.mlr.press/v235/patel24a.html'><img src='https://img.shields.io/badge/Paper-ICML024-blue'></a>
+    <a href='https://proceedings.mlr.press/v235/patel24a.html'><img src='https://img.shields.io/badge/Paper-AISTATS024-blue'></a>
 </div>
 
 ## ⚖️ Disclaimer
