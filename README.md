@@ -18,6 +18,9 @@ Department of Statistics, University of Michigan.
     <a href='https://proceedings.mlr.press/v238/patel24a.html'><img src='https://img.shields.io/badge/Paper-AISTATS024-blue'></a>
 </div>
 
+## 📝 Important Note
+The work in this repo has been packaged into this <a href='https://github.com/yashpatel5400/robbuffet'>repo</a>. Please direct all further work to that repository.
+
 ## ⚖️ Disclaimer
 This project is intended for academic research, and we explicitly disclaim any responsibility for user-generated content. Users are solely liable for their actions while using the generative model. The project contributors have no legal affiliation with, nor accountability for, users' behaviors. It is imperative to use the generative model responsibly, adhering to both ethical and legal standards.
 
